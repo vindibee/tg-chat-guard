@@ -38,7 +38,7 @@ def make_settings(**overrides: Any) -> Settings:
         "super_admin_ids": str(ADMIN_ID),
     }
     values.update(overrides)
-    return Settings(**values)
+    return Settings(_env_file=None, **values)
 
 
 def make_message(bot: FakeBot, text: str = "/cmd", reply: Message | None = None) -> Message:

@@ -39,7 +39,7 @@ def make_settings(**overrides: Any) -> Settings:
         "reputation_providers": "cas_export",
     }
     values.update(overrides)
-    return Settings(**values)
+    return Settings(_env_file=None, **values)
 
 
 def make_join(user_id: int, *, is_bot: bool = False, username: str | None = None):

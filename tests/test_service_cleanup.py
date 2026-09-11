@@ -28,7 +28,7 @@ USER = User(id=999, is_bot=False, first_name="Новичок")
 def make_settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {"bot_token": "123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
     values.update(overrides)
-    return Settings(**values)
+    return Settings(_env_file=None, **values)
 
 
 def service_message(bot: FakeBot, **payload: Any) -> Message:

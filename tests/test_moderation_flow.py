@@ -34,6 +34,7 @@ CLEAN = "Посоветуйте книги по трейдингу, желате
 
 def make_settings(**overrides: Any) -> Settings:
     return Settings(
+        _env_file=None,
         bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         admin_log_chat_id=ADMIN_CHAT_ID,
         notify_chat=False,

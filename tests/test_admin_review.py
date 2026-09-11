@@ -35,6 +35,7 @@ OUTSIDER_ID = 777
 
 def make_settings(**overrides: Any) -> Settings:
     return Settings(
+        _env_file=None,
         bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         admin_log_chat_id=-1009999999999,
         super_admin_ids="",

@@ -53,6 +53,7 @@ class Harness:
 
     async def setup(self, **overrides: Any) -> Harness:
         self.settings = Settings(
+            _env_file=None,
             bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             admin_log_chat_id=ADMIN_CHAT_ID,
             notify_chat=False,

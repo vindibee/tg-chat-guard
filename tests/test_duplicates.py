@@ -28,6 +28,7 @@ BOOK = "Ищу книгу Умберто Эко «Имя розы», желат�
 
 def make_settings(**overrides: Any) -> Settings:
     return Settings(
+        _env_file=None,
         bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         duplicate_threshold=3,
         duplicate_min_length=40,

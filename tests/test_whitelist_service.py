@@ -21,6 +21,7 @@ ADMIN_ID = 777
 
 def make_settings() -> Settings:
     return Settings(
+        _env_file=None,
         bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         database_url="sqlite+aiosqlite:///:memory:",
         flibusta_bot_id=555001,

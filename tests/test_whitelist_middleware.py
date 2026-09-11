@@ -26,6 +26,7 @@ FLIBUSTA_ID = 555001
 
 def make_settings(**overrides: Any) -> Settings:
     return Settings(
+        _env_file=None,
         bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         flibusta_bot_id=FLIBUSTA_ID,
         flibusta_username="flibustafreebookbot",

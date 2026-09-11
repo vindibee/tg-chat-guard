@@ -43,6 +43,9 @@ class Category(StrEnum):
     ADULT = "adult"
     JOB_SCAM = "job_scam"
     DRUGS = "drugs"
+    #: Торговля аккаунтами, номерами, накруткой — отдельный вид рассылок,
+    #: почти всегда англоязычный.
+    ACCOUNT_TRADE = "account_trade"
     #: Нейтральная финансовая/криптовалютная лексика. Сама по себе НИКОГДА не
     #: является поводом для наказания — это лексика легальных книжных запросов
     #: («Майстеринг Биткоин», «книги по трейдингу», «Криптография»).
@@ -279,10 +282,96 @@ _FINANCE_NEUTRAL: Final[Sequence[KeywordRule]] = (
             r"заработок", r"заработать", r"бизнес", r"business", r"forex", r"форекс",
             r"фондов\w* рынок", r"экономик\w*", r"маининг", r"mining",
             r"криптографи\w*", r"криптограф", r"шифровани\w*",
+            r"passive income", r"financial freedom", r"work from home",
+            r"investment plan", r"side hustle", r"stock market",
         ],
         min_squash_len=7,
     ),
 )
+
+# --------------------------------------------------------------------------- #
+#                        АНГЛОЯЗЫЧНЫЕ ПРАВИЛА                                  #
+# --------------------------------------------------------------------------- #
+# Русский чат — не помеха для англоязычных рассылок: «telegram accounts cheap
+# store, get yours @bot» не содержит ни одного русского слова. Держим их
+# отдельными правилами, чтобы в логах было видно, чем именно поймали.
+
+_ACCOUNT_TRADE: Final[Sequence[KeywordRule]] = (
+    KeywordRule.build(
+        "account_trade_en",
+        Category.ACCOUNT_TRADE,
+        4.5,
+        [
+            r"telegram accounts", r"tg accounts", r"accounts? (store|shop|market|service)",
+            r"(cheap|aged|verified|bulk|fresh|old) accounts",
+            r"(sell|selling|buy|buying) accounts", r"account (store|shop|seller)",
+            r"virtual numbers?", r"sms activation", r"proxy (store|shop|seller)",
+            r"mass (dm|dms|sending|mailing)", r"auto ?sender", r"smm panel",
+            r"buy (views|subs|subscribers|likes|followers)",
+            r"boost (your )?(views|subscribers|channel)",
+        ],
+    ),
+    KeywordRule.build(
+        "account_trade_ru",
+        Category.ACCOUNT_TRADE,
+        4.5,
+        [
+            r"аккаунт(ы|ов) (оптом|дешево|под ключ|в наличии)",
+            r"магазин аккаунтов", r"продажа аккаунтов", r"прокачанн\w* аккаунт",
+            r"виртуальн\w* номер", r"смс ?активаци",
+            r"накрутк\w* (подписчик|просмотр|лаик|реакци)",
+        ],
+    ),
+)
+
+_ENGLISH_SCAM: Final[Sequence[KeywordRule]] = (
+    KeywordRule.build(
+        "casino_en",
+        Category.CASINO,
+        4.0,
+        [
+            r"betting (site|shop)", r"free bets?", r"sports betting", r"online slots",
+            r"deposit bonus", r"no deposit", r"win real money",
+        ],
+    ),
+    KeywordRule.build(
+        "crypto_scam_en",
+        Category.CRYPTO_SCAM,
+        4.0,
+        [
+            r"air ?drop", r"free crypto", r"double your (btc|bitcoin|crypto|money)",
+            r"trading signals", r"pump group", r"seed phrase",
+            r"wallet (verification|validation)", r"connect (your )?wallet",
+            r"guaranteed (profit|returns?)", r"crypto giveaway",
+        ],
+    ),
+    KeywordRule.build(
+        "adult_en",
+        Category.ADULT,
+        4.5,
+        [
+            r"sex chat", r"hot (girls|photos|videos)", r"adult content", r"18\+ content",
+            r"leaked (nudes|photos)", r"webcam girls", r"dating for sex",
+        ],
+    ),
+    KeywordRule.build(
+        "job_scam_en",
+        Category.JOB_SCAM,
+        4.0,
+        [
+            # Только однозначно рекламные обороты. «work from home»,
+            # «passive income» и «financial freedom» сюда не входят: это
+            # названия книг и обычный разговор в читательском чате.
+            r"earn \$? ?\d+ ?(a|per|\/) ?(day|week|hour)",
+            r"\$ ?\d+ ?(a|per|\/) ?(day|week)",
+            r"work from home.{0,25}(\$|earn|income|salary|pay)",
+            r"make money (online|fast|while)", r"no experience needed",
+            r"hiring (now|remote|urgently)", r"easy money guaranteed",
+            r"be your own boss", r"start earning today",
+        ],
+    ),
+)
+
 
 DEFAULT_RULES: Final[tuple[KeywordRule, ...]] = (
     *_CASINO,
@@ -290,6 +379,8 @@ DEFAULT_RULES: Final[tuple[KeywordRule, ...]] = (
     *_ADULT,
     *_JOB_SCAM,
     *_DRUGS,
+    *_ACCOUNT_TRADE,
+    *_ENGLISH_SCAM,
     *_FINANCE_NEUTRAL,
 )
 
@@ -312,6 +403,12 @@ CALL_TO_ACTION_RE: Final[re.Pattern[str]] = compile_alternation(
         r"осталось \d+ мест", r"набор закрывается", r"пиши слово", r"ставь ?\+",
         r"подпишись (на|и)", r"вступаи в", r"переходи в (бот|канал)", r"жду в лс",
         r"научу зарабатывать", r"пишите в телеграм", r"свяжись со мнои",
+        # Англоязычные призывы: рассылки часто вообще не содержат русских слов.
+        r"get yours?", r"click (here|the link|below)", r"(dm|pm|text|message) me",
+        r"contact me", r"hit me up", r"write (to )?me", r"join (now|us|our)",
+        r"check (my )?bio", r"link in bio", r"(order|buy|shop|sign up|register) now",
+        r"limited (offer|time)", r"act now", r"don'?t miss", r"free trial",
+        r"start earning", r"tap (the )?link", r"more info in",
     )
 )
 
@@ -397,3 +494,4 @@ class StopWordRegistry:
 
 
 DEFAULT_REGISTRY: Final[StopWordRegistry] = StopWordRegistry()
+

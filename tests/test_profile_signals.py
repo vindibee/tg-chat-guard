@@ -25,6 +25,7 @@ from bot.services.stopwords import Category  # noqa: E402
 
 CHAT_ID = -1001234567890
 SETTINGS = Settings(
+    _env_file=None,
     bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     safe_domains="flibusta.is",
 )

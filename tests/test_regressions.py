@@ -29,6 +29,7 @@ CHANNEL_ID = -1005555555555
 
 def make_settings(**overrides: Any) -> Settings:
     return Settings(
+        _env_file=None,
         bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         report_threshold=2,
         **overrides,

@@ -19,7 +19,11 @@ CLEAN_ID = 356404555
 
 
 def make_settings(**overrides: Any) -> Settings:
-    return Settings(bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", **overrides)
+    return Settings(
+        _env_file=None,
+        bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        **overrides,
+    )
 
 
 # ------------------------------- снимок CAS --------------------------------

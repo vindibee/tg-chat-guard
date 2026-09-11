@@ -26,6 +26,7 @@ USER_ID = 999
 
 def make_settings(**overrides: Any) -> Settings:
     return Settings(
+        _env_file=None,
         bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         approved_after_messages=7,
         new_member_messages=5,

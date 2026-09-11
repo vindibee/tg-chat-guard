@@ -18,6 +18,7 @@ from bot.services.antispam_engine import Action, AntiSpamEngine, EngineConfig  #
 
 CHAT_ID = -1001234567890
 SETTINGS = Settings(
+    _env_file=None,
     bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     flibusta_username="flibustafreebookbot",
     safe_domains="flibusta.is",
