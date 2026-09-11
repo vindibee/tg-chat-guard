@@ -1,0 +1,20 @@
+Миграции схемы (alembic, async).
+
+Создать новую ревизию после правки моделей в bot/db/models.py:
+
+    alembic revision --autogenerate -m "add something"
+
+Накатить вручную (бот делает это сам при старте):
+
+    alembic upgrade head
+
+Откатить на шаг назад:
+
+    alembic downgrade -1
+
+URL базы берётся из .env через bot/config.py, значение sqlalchemy.url
+в alembic.ini — заглушка. Сам alembic.ini держим строго в ASCII: он
+читается в кодировке локали, и кириллица в нём ломает запуск на Windows.
+
+Тест tests/test_migrations.py::test_migrations_match_models падает, если
+модель изменили, а ревизию не добавили.
