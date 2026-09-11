@@ -15,6 +15,7 @@ from aiogram.utils.markdown import hbold
 from bot.handlers.admin_review import send_review_card
 from bot.services.activity_tracker import ActivityTracker
 from bot.services.antispam_engine import Action, AntiSpamEngine, MessageContext, Verdict
+from bot.services.deleted_registry import DeletedMessageRegistry
 from bot.services.duplicate_detector import DuplicateDetector
 from bot.services.event_service import EventService
 from bot.services.reputation_service import ReputationService, ReputationVerdict
@@ -102,12 +103,19 @@ async def moderate_message(
     events: EventService,
     reputation: ReputationService,
     duplicates: DuplicateDetector,
+    deleted_registry: DeletedMessageRegistry,
     message_count: int = 0,
     **_: Any,
 ) -> None:
     """Главный обработчик: проверяет сообщение и применяет санкции."""
     user = message.from_user
     user_id = user.id if user else 0
+
+    # Книжный бот вне модерации: ни мьютов, ни банов, ни спам-баллов.
+    # Основную защиту даёт WhitelistMiddleware (TrustReason.FLIBUSTA); эта
+    # строка — вторая линия на случай прямого вызова хендлера в обход роутера.
+    if user_id and user_id == settings.flibusta_bot_id:
+        return
     # Онлайн-запрос к блок-листу делаем только на первом сообщении автора:
     # снимок CAS проверяется всегда, он локальный и бесплатный.
     blocklist = await reputation.check(user_id, online=message_count == 0)
@@ -151,6 +159,7 @@ async def moderate_message(
         settings=settings,
         verdict=verdict,
         events=events,
+        deleted_registry=deleted_registry,
         log_extra=log_extra,
     )
 
@@ -162,6 +171,7 @@ async def apply_punishment(
     settings: Settings,
     verdict: Verdict,
     events: EventService,
+    deleted_registry: DeletedMessageRegistry,
     log_extra: dict[str, Any],
 ) -> None:
     """Применяет санкцию, пишет событие в журнал и зовёт админов на разбор."""
@@ -174,6 +184,10 @@ async def apply_punishment(
         logger.info("DRY-RUN: санкция не применялась", extra=log_extra)
     else:
         deleted = await safe_delete_message(message)
+        if deleted:
+            # Запоминаем удалённое: книжный бот может ответить на этот запрос
+            # уже после удаления, и его ответ нужно будет убрать следом.
+            deleted_registry.remember(message.chat.id, message.message_id)
         if verdict.action is Action.DELETE_AND_MUTE and user_id:
             punished = await safe_restrict_member(
                 bot, message.chat.id, user_id, settings.mute_duration

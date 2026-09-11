@@ -109,6 +109,25 @@ class Settings(BaseSettings):
     #: Сколько хранить ответ блок-листа в Redis, сек.
     reputation_cache_ttl: int = Field(default=86400, ge=60)
 
+    # --- Массовая очистка (/clean) ------------------------------------------
+    #: Разрешить админам массовое удаление сообщений.
+    clean_enabled: bool = True
+    #: Сколько сообщений чистит `/clean all`.
+    clean_default_depth: int = Field(default=1000, ge=1)
+    #: Жёсткий потолок глубины: защита от опечатки вида `/clean 999999`.
+    clean_max_depth: int = Field(default=5000, ge=1)
+    #: Начиная с этой глубины бот спросит подтверждение кнопкой.
+    clean_confirm_threshold: int = Field(default=200, ge=1)
+    #: Пауза между пакетами удаления, сек. — страховка от FloodWait.
+    clean_batch_pause: float = Field(default=0.3, ge=0)
+    #: Через сколько секунд убрать отчёт об очистке.
+    clean_notice_ttl: int = Field(default=5, ge=0)
+
+    # --- Ответы бота Флибусты ------------------------------------------------
+    #: Удалять «мусорные» ответы книжного бота: «не найдено книг» и ответы
+    #: на сообщения, которые антиспам уже удалил.
+    flibusta_cleanup: bool = True
+
     # --- Служебные сообщения ------------------------------------------------
     #: Какие группы служебных сообщений удалять: `join`, `leave`, `pin`, `title`,
     #: `photo`, `videochat`, `forum`, `boost`, `giveaway`, `gift`, `created`,
@@ -217,6 +236,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _check_thresholds(self) -> Settings:
+        if self.clean_confirm_threshold > self.clean_max_depth:
+            raise ValueError(
+                "clean_confirm_threshold не может превышать clean_max_depth: "
+                "иначе подтверждение никогда не сработает"
+            )
         if not (self.delete_threshold <= self.mute_threshold <= self.ban_threshold):
             raise ValueError(
                 "Пороги должны возрастать: delete_threshold <= mute_threshold <= ban_threshold"

@@ -16,6 +16,9 @@ class FakeBot:
         self.id = 424242
         self.admin_ids = admin_ids
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        #: Ответы get_chat_member: user_id -> объект участника.
+        self.members: dict[int, Any] = {}
+        self.default_member: Any = SimpleNamespace(status="member")
 
     def _record(self, name: str, **kwargs: Any) -> None:
         self.calls.append((name, kwargs))
@@ -64,15 +67,35 @@ class FakeBot:
         self._record("ban_chat_sender_chat", chat_id=chat_id, sender_chat_id=sender_chat_id)
         return True
 
+    async def delete_messages(self, chat_id: int, message_ids: list[int]) -> bool:
+        self._record("delete_messages", chat_id=chat_id, message_ids=list(message_ids))
+        return True
+
+    async def delete_message(self, chat_id: int, message_id: int) -> bool:
+        self._record("delete_message", chat_id=chat_id, message_id=message_id)
+        return True
+
+    async def get_chat_member(self, chat_id: int, user_id: int) -> Any:
+        self._record("get_chat_member", chat_id=chat_id, user_id=user_id)
+        if user_id in self.members:
+            return self.members[user_id]
+        # Те же участники, что и в get_chat_administrators, считаются владельцами.
+        if user_id in self.admin_ids:
+            return SimpleNamespace(status="creator")
+        return self.default_member
+
     async def get_chat(self, chat_id: int) -> SimpleNamespace:
         self._record("get_chat", chat_id=chat_id)
         return SimpleNamespace(permissions=None)
 
     async def send_message(self, chat_id: int, text: str, **kwargs: Any) -> Message:
         self._record("send_message", chat_id=chat_id, text=text, **kwargs)
-        return Message(
+        message = Message(
             message_id=1,
             date=datetime.now(tz=UTC),
             chat=Chat(id=chat_id, type="supergroup"),
             text=text,
         )
+        # Настоящий Bot возвращает сообщение, привязанное к себе: без этого
+        # у ответа не работают message.edit_text() и message.delete().
+        return message.as_(self)

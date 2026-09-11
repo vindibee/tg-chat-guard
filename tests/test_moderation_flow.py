@@ -17,6 +17,7 @@ from bot.db.session import create_database  # noqa: E402
 from bot.handlers.moderation import moderate_message  # noqa: E402
 from bot.services.activity_tracker import ActivityTracker  # noqa: E402
 from bot.services.antispam_engine import AntiSpamEngine, EngineConfig  # noqa: E402
+from bot.services.deleted_registry import DeletedMessageRegistry  # noqa: E402
 from bot.services.duplicate_detector import DuplicateDetector  # noqa: E402
 from bot.services.event_service import EventService  # noqa: E402
 from bot.services.reputation_service import ReputationService  # noqa: E402
@@ -75,6 +76,7 @@ async def run_flow(
         events=events,
         reputation=reputation,
         duplicates=DuplicateDetector(settings, FakeRedis()),
+        deleted_registry=DeletedMessageRegistry(),
         message_count=0,
     )
     return bot, events, activity
@@ -129,6 +131,7 @@ async def test_spam_resets_approval_progress() -> None:
         events=EventService(database),
         reputation=ReputationService(settings, None, FakeSession()),
         duplicates=DuplicateDetector(settings, FakeRedis()),
+        deleted_registry=DeletedMessageRegistry(),
         message_count=4,
     )
     assert await activity.get_count(CHAT_ID, USER_ID) == 0

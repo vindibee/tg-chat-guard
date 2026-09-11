@@ -28,6 +28,7 @@ CHAT_ID = -1001234567890
 ADMIN_CHAT_ID = -1009999999999
 ADMIN_ID = 501
 USER_ID = 999
+FLIBUSTA_ID = 8156231123
 SPAM = "КАЗИНО ВУЛКАН бонус, переходи по ссылке bonus.top/ref/1"
 
 
@@ -59,6 +60,8 @@ class Harness:
             notify_chat=False,
             reputation_providers="cas_export",
             super_admin_ids=str(ADMIN_ID),
+            flibusta_bot_id=FLIBUSTA_ID,
+            clean_notice_ttl=0,
             **overrides,
         )
         database = create_database("sqlite+aiosqlite:///:memory:")
@@ -216,6 +219,53 @@ async def test_service_cleanup_can_be_switched_off() -> None:
         left_chat_member=newcomer,
     )
     assert "DeleteMessage" not in await harness.feed(service)
+
+
+async def test_clean_command_purges_messages() -> None:
+    """Небольшая глубина выполняется сразу."""
+    harness = await make_harness()
+    calls = await harness.feed(make_message("/clean 50", ADMIN_ID, 60))
+    assert "get_chat_member" in calls, "права проверяются заново"
+    assert "delete_messages" in calls, calls
+    assert harness.bot.payload("delete_messages")["chat_id"] == CHAT_ID
+
+
+async def test_deep_clean_asks_for_confirmation() -> None:
+    """Глубокая очистка необратима — сначала подтверждение."""
+    harness = await make_harness()
+    calls = await harness.feed(make_message("/clean all", ADMIN_ID, 61))
+    assert "delete_messages" not in calls, "ничего не удаляем до подтверждения"
+    answer = harness.bot.payload("SendMessage")
+    assert "Удалить последние" in answer["text"]
+    assert answer["reply_markup"] is not None
+
+
+async def test_clean_is_not_available_to_regular_user() -> None:
+    harness = await make_harness()
+    calls = await harness.feed(make_message("/clean 50", USER_ID, 62))
+    assert "delete_messages" not in calls, calls
+
+
+async def test_flibusta_junk_reply_is_cleaned() -> None:
+    """Отказ книжного бота убирается, полезный ответ остаётся."""
+    harness = await make_harness()
+    junk = Message(
+        message_id=70,
+        date=datetime.now(tz=UTC),
+        chat=Chat(id=CHAT_ID, type="supergroup", title="Книжный клуб"),
+        from_user=User(id=FLIBUSTA_ID, is_bot=True, first_name="Флибуста"),
+        text="По запросу «асдфг» не найдено книг",
+    )
+    assert "DeleteMessage" in await harness.feed(junk)
+
+    useful = Message(
+        message_id=71,
+        date=datetime.now(tz=UTC),
+        chat=Chat(id=CHAT_ID, type="supergroup", title="Книжный клуб"),
+        from_user=User(id=FLIBUSTA_ID, is_bot=True, first_name="Флибуста"),
+        text="Нашлось 4 книги: Война и мир, Анна Каренина…",
+    )
+    assert "DeleteMessage" not in await harness.feed(useful)
 
 
 async def _run() -> int:

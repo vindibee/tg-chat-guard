@@ -18,6 +18,8 @@ from bot.handlers import (
     admin_review,
     admin_training,
     admin_whitelist,
+    cleanup,
+    flibusta_filter,
     join_guard,
     moderation,
     service_cleanup,
@@ -27,6 +29,7 @@ from bot.middlewares.whitelist_middleware import WhitelistMiddleware
 from bot.services.activity_tracker import ActivityTracker
 from bot.services.admin_cache import ChatAdminCache
 from bot.services.antispam_engine import AntiSpamEngine, EngineConfig
+from bot.services.deleted_registry import DeletedMessageRegistry
 from bot.services.duplicate_detector import DuplicateDetector
 from bot.services.event_service import EventService
 from bot.services.report_service import ReportService
@@ -82,6 +85,7 @@ def build_dispatcher(
     samples = SampleService(database)
     reports = ReportService(settings, redis)
     duplicates = DuplicateDetector(settings, redis)
+    deleted_registry = DeletedMessageRegistry()
     reputation = reputation or ReputationService(settings, redis)
     engine = AntiSpamEngine(EngineConfig.from_settings(settings))
 
@@ -99,6 +103,7 @@ def build_dispatcher(
             reports=reports,
             reputation=reputation,
             duplicates=duplicates,
+            deleted_registry=deleted_registry,
         )
     )
 
@@ -106,7 +111,11 @@ def build_dispatcher(
     dispatcher.include_router(admin_review.build_router())
     dispatcher.include_router(admin_training.build_router())
     dispatcher.include_router(admin_whitelist.build_router())
+    dispatcher.include_router(cleanup.build_router())
     dispatcher.include_router(join_guard.build_router())
+    # Ответы книжного бота разбираются раньше антиспама: сам бот неприкосновенен,
+    # но его отказы и ответы в пустоту в чате не нужны.
+    dispatcher.include_router(flibusta_filter.build_router(settings))
     # Уборка служебных сообщений — до модерации: у них нет текста, и антиспаму
     # они всё равно не достанутся.
     dispatcher.include_router(service_cleanup.build_router(settings))
