@@ -189,6 +189,34 @@ async def test_regress_command_reports_the_corpus() -> None:
     assert "1/1" in answer, answer
 
 
+async def test_join_service_message_is_cleaned() -> None:
+    """«Вступил в группу» убирается, не доходя до антиспама."""
+    harness = await make_harness()
+    newcomer = User(id=777, is_bot=False, first_name="Новичок")
+    service = Message(
+        message_id=50,
+        date=datetime.now(tz=UTC),
+        chat=Chat(id=CHAT_ID, type="supergroup", title="Книжный клуб"),
+        from_user=newcomer,
+        new_chat_members=[newcomer],
+    )
+    calls = await harness.feed(service)
+    assert "DeleteMessage" in calls, calls
+
+
+async def test_service_cleanup_can_be_switched_off() -> None:
+    harness = await make_harness(service_cleanup="none")
+    newcomer = User(id=778, is_bot=False, first_name="Новичок")
+    service = Message(
+        message_id=51,
+        date=datetime.now(tz=UTC),
+        chat=Chat(id=CHAT_ID, type="supergroup", title="Книжный клуб"),
+        from_user=newcomer,
+        left_chat_member=newcomer,
+    )
+    assert "DeleteMessage" not in await harness.feed(service)
+
+
 async def _run() -> int:
     failures = 0
     for name, func in sorted(globals().items()):

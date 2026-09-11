@@ -109,6 +109,26 @@ class Settings(BaseSettings):
     #: Сколько хранить ответ блок-листа в Redis, сек.
     reputation_cache_ttl: int = Field(default=86400, ge=60)
 
+    # --- Служебные сообщения ------------------------------------------------
+    #: Какие группы служебных сообщений удалять: `join`, `leave`, `pin`, `title`,
+    #: `photo`, `videochat`, `forum`, `boost`, `giveaway`, `gift`, `created`,
+    #: `other`. Особые значения: `all` и `none`. Платежи не удаляются никогда.
+    service_cleanup: Annotated[set[str], NoDecode] = Field(
+        default_factory=lambda: {
+            "join",
+            "leave",
+            "title",
+            "photo",
+            "videochat",
+            "boost",
+            "created",
+            "forum",
+            "giveaway",
+            "gift",
+            "other",
+        }
+    )
+
     # --- Дубликаты ----------------------------------------------------------
     #: Искать одинаковые сообщения от разных участников.
     duplicate_enabled: bool = True
@@ -167,6 +187,7 @@ class Settings(BaseSettings):
         "static_whitelist_usernames",
         "safe_domains",
         "reputation_providers",
+        "service_cleanup",
         mode="before",
     )
     @classmethod
@@ -174,7 +195,11 @@ class Settings(BaseSettings):
         return _split_csv(value)
 
     @field_validator(
-        "static_whitelist_usernames", "safe_domains", "reputation_providers", mode="after"
+        "static_whitelist_usernames",
+        "safe_domains",
+        "reputation_providers",
+        "service_cleanup",
+        mode="after",
     )
     @classmethod
     def _normalize_lower(cls, value: set[str]) -> set[str]:

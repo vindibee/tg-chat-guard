@@ -20,6 +20,7 @@ from bot.handlers import (
     admin_whitelist,
     join_guard,
     moderation,
+    service_cleanup,
 )
 from bot.middlewares.dependencies import DependenciesMiddleware
 from bot.middlewares.whitelist_middleware import WhitelistMiddleware
@@ -106,6 +107,9 @@ def build_dispatcher(
     dispatcher.include_router(admin_training.build_router())
     dispatcher.include_router(admin_whitelist.build_router())
     dispatcher.include_router(join_guard.build_router())
+    # Уборка служебных сообщений — до модерации: у них нет текста, и антиспаму
+    # они всё равно не достанутся.
+    dispatcher.include_router(service_cleanup.build_router(settings))
 
     trust_gate = WhitelistMiddleware(settings, whitelist, admin_cache, activity)
     dispatcher.include_router(moderation.build_router(trust_gate))
