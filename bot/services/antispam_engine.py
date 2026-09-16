@@ -59,6 +59,9 @@ class SignalKind(StrEnum):
     TELEGRAM_INVITE = "telegram_invite"
     HIDDEN_LINK = "hidden_link"
     MENTION = "mention"
+    #: Упоминание бота (`@..._bot`, `t.me/...bot`) — основной канал рекламы
+    #: спам-сеток: сам текст безобиден, всё «содержимое» спрятано в боте.
+    BOT_MENTION = "bot_mention"
     REFERRAL = "referral"
     CALL_TO_ACTION = "call_to_action"
     SALES_PITCH = "sales_pitch"
@@ -84,6 +87,7 @@ HARD_FACTORS: Final[frozenset[SignalKind]] = frozenset(
         SignalKind.TELEGRAM_INVITE,
         SignalKind.HIDDEN_LINK,
         SignalKind.MENTION,
+        SignalKind.BOT_MENTION,
         SignalKind.REFERRAL,
         SignalKind.CALL_TO_ACTION,
         SignalKind.CONTACT,
@@ -257,6 +261,7 @@ class EngineConfig:
             SignalKind.TELEGRAM_INVITE: 5.0,
             SignalKind.HIDDEN_LINK: 5.0,
             SignalKind.MENTION: 2.0,
+            SignalKind.BOT_MENTION: 4.5,
             SignalKind.REFERRAL: 4.0,
             SignalKind.CALL_TO_ACTION: 3.0,
             SignalKind.SALES_PITCH: 2.0,
@@ -285,6 +290,7 @@ class EngineConfig:
         weights = dict(config.weights)
         weights[SignalKind.EXTERNAL_BAN] = settings.reputation_weight
         weights[SignalKind.DUPLICATE] = settings.duplicate_weight
+        weights[SignalKind.BOT_MENTION] = settings.bot_mention_weight
         return replace(config, weights=weights)
 
     def weight(self, kind: SignalKind) -> float:
@@ -313,6 +319,16 @@ _TELEGRAM_INVITE_RE: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _MENTION_RE: Final[re.Pattern[str]] = re.compile(r"(?<![\w/])@([a-z0-9_]{4,32})", re.IGNORECASE)
+#: Цифры, которыми маскируют окончание: «@promo_b0t», «@hot_8ot».
+_USERNAME_DELEET: Final[dict[int, str]] = str.maketrans({"0": "o", "8": "b", "7": "t"})
+
+
+def _is_bot_username(username: str) -> bool:
+    """Telegram требует, чтобы username бота кончался на «bot» — этим и пользуемся."""
+    name = username.lstrip("@").lower().rstrip("_")
+    return len(name) > 3 and name.translate(_USERNAME_DELEET).endswith("bot")
+
+
 _PHONE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?<!\d)(?:\+?\d{1,3}[\s\-()]{0,3})?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}(?!\d)"
 )
@@ -548,14 +564,14 @@ class AntiSpamEngine:
             hosts_total += 1
             hosts_unsafe += 1
             private = target.startswith(("+", "joinchat"))
+            if private:
+                kind = SignalKind.TELEGRAM_INVITE
+            elif _is_bot_username(target):
+                kind = SignalKind.BOT_MENTION
+            else:
+                kind = SignalKind.LINK
             signals.append(
-                Signal(
-                    kind=SignalKind.TELEGRAM_INVITE if private else SignalKind.LINK,
-                    weight=self._config.weight(
-                        SignalKind.TELEGRAM_INVITE if private else SignalKind.LINK
-                    ),
-                    evidence=match.group(0),
-                )
+                Signal(kind=kind, weight=self._config.weight(kind), evidence=match.group(0))
             )
 
         # 2. Обычные ссылки (со схемой и «голые» домены).
@@ -639,15 +655,27 @@ class AntiSpamEngine:
                 )
             )
 
-        for username in self._collect_mentions(context):
+        mentions = self._collect_mentions(context)
+        # Бот важнее обычного аккаунта: если среди упоминаний есть бот, фиксируем
+        # именно его. Сигнал один на сообщение — пять ботов в тексте не дают
+        # пятикратный вес, иначе одно правило перевесило бы весь скор.
+        bots = [username for username in mentions if _is_bot_username(username)]
+        if bots:
+            signals.append(
+                Signal(
+                    kind=SignalKind.BOT_MENTION,
+                    weight=self._config.weight(SignalKind.BOT_MENTION),
+                    evidence=f"@{bots[0]}",
+                )
+            )
+        elif mentions:
             signals.append(
                 Signal(
                     kind=SignalKind.MENTION,
                     weight=self._config.weight(SignalKind.MENTION),
-                    evidence=f"@{username}",
+                    evidence=f"@{mentions[0]}",
                 )
             )
-            break  # достаточно одного упоминания, чтобы зафиксировать фактор
 
         if self._has_contact(context):
             signals.append(
@@ -741,6 +769,10 @@ class AntiSpamEngine:
             SignalKind.REFERRAL,
             SignalKind.CALL_TO_ACTION,
             SignalKind.DUPLICATE,
+            # «Ищу книгу, пиши в @promo_bot» — книжные слова не делают бота
+            # книжным. Доверенные боты (Флибуста) сюда не попадают вовсе:
+            # они в `known_safe_usernames`.
+            SignalKind.BOT_MENTION,
         }
     )
 

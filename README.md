@@ -1,255 +1,322 @@
-# Telegram Anti-Spam Moderator (aiogram 3.x)
+# TG Chat Guard — anti-spam moderator for Telegram (aiogram 3.x)
 
-Production-ready модуль бота-модератора для книжного Telegram-чата: расширенный
-фильтр спама, двухуровневый белый список и **защита от ложных срабатываний** на
-книжных запросах («Майстеринг Биткоин», «книги по трейдингу», «Криптография»).
+**English** | [Русский](README.ru.md)
 
-## Ключевой инвариант
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![aiogram](https://img.shields.io/badge/aiogram-3.x-2CA5E0)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D)
+![Docker](https://img.shields.io/badge/docker-compose-2496ED)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-> Стоп-слово само по себе **никогда** не является основанием для наказания.
+A production-ready moderator bot for a book-lovers' Telegram chat: an extended
+spam filter, a two-level whitelist and **false-positive protection** for book
+requests ("Mastering Bitcoin", "books on trading", "Cryptography").
 
-Санкция применяется, только если тематическая лексика совмещена хотя бы с одним
-«жёстким» спам-фактором:
+The bot is built for a Russian-speaking community, so its chat messages and
+command replies are in Russian, while the spam dictionary covers both Russian
+and English.
 
-| Фактор | Пример |
+## Core invariant
+
+> A stop word on its own is **never** a reason to punish.
+
+A sanction is applied only when topical vocabulary is combined with at least one
+"hard" spam factor:
+
+| Factor | Example |
 |---|---|
-| внешняя ссылка | `http://…`, `scam.top`, `t.me/…` |
-| приглашение в приватный канал | `t.me/+abc`, `t.me/joinchat/…` |
-| скрытая ссылка | текст `Читать книгу` за которым `https://scam.top/ref/7` |
-| реферальный код | `?ref=`, `промокод`, `по моей ссылке` |
-| призыв к действию | `переходи по ссылке`, `пиши в лс`, `начни зарабатывать` |
-| упоминание постороннего аккаунта | `@scam_channel` |
-| контакты | телефон, WhatsApp, Viber |
-| реклама в имени профиля | имя «КАЗИНО ВУЛКАН», username `@casino_promo` |
-| ссылка в имени профиля | «Заработок t.me/+abcdef» |
-| один текст с нескольких аккаунтов | рассылка от 3+ разных участников за час |
+| external link | `http://…`, `scam.top`, `t.me/…` |
+| invite to a private channel | `t.me/+abc`, `t.me/joinchat/…` |
+| hidden link | text `Read the book` pointing to `https://scam.top/ref/7` |
+| referral code | `?ref=`, `promo code`, `via my link` |
+| call to action | `follow the link`, `DM me`, `start earning` |
+| mention of an unrelated account | `@scam_channel` |
+| mention of a third-party bot (higher weight) | `@llkaebot`, `@promo_b0t`, `t.me/leaks_bot` |
+| contact details | phone number, WhatsApp, Viber |
+| advertising in the profile name | name "CASINO VULKAN", username `@casino_promo` |
+| link in the profile name | "Earn money t.me/+abcdef" |
+| the same text from several accounts | a mailing from 3+ different members within an hour |
 
-Ссылки на доверенные домены (`flibusta.is`, `litres.ru`, `fantlab.ru`, …) фактором
-не считаются, а «книжное намерение» (`ищу`, `автор`, `fb2`, `посоветуйте`, …) даёт
-скидку к спам-скору — но не спасает спам с инвайтом, рефкодом или прямым призывом.
+Links to trusted domains (`flibusta.is`, `litres.ru`, `fantlab.ru`, …) are not
+counted as a factor, and "book intent" (`looking for`, `author`, `fb2`,
+`recommend`, …) lowers the spam score — but it does not save spam that carries an
+invite, a referral code or a direct call to action.
 
-## Архитектура
+## Architecture
 
 ```
-alembic.ini                          # конфиг миграций (строго ASCII!)
-migrations/                          # ревизии схемы
+Dockerfile                           # multi-stage image, runs as appuser
+docker-compose.yml                   # bot + postgres + redis
+alembic.ini                          # migrations config (strictly ASCII!)
+migrations/                          # schema revisions
 bot/
-├── config.py                        # pydantic-settings v2: токены, пороги, whitelist
-├── main.py                          # сборка зависимостей, роутеры, polling
+├── config.py                        # pydantic-settings v2: tokens, thresholds, whitelist
+├── main.py                          # dependency wiring, routers, polling
 ├── db/
 │   ├── models.py                    # WhitelistEntry, ModerationEvent, MessageSample
-│   ├── migrator.py                  # накат миграций при старте
-│   └── session.py                   # async engine + фабрика сессий
+│   ├── migrator.py                  # applies migrations on startup
+│   └── session.py                   # async engine + session factory
 ├── services/
-│   ├── text_cleaner.py              # нормализация: гомоглифы, leet, zero-width, «к.р.и.п.т.а»
-│   ├── stopwords.py                 # категориальный словарь + контекстные маркеры
-│   ├── antispam_engine.py           # умная детекция: скоринг, анти-FP, выбор санкции
-│   ├── whitelist_service.py         # белый список: локальный кэш → Redis → БД
-│   ├── reputation_service.py        # блок-листы CAS/LOLS: снимок в памяти + кэш
-│   ├── event_service.py             # журнал срабатываний и их разбор админом
-│   ├── sample_service.py            # размеченные /spam и /ham примеры
-│   ├── report_service.py            # подсчёт жалоб участников
-│   ├── duplicate_detector.py        # один текст с нескольких аккаунтов
-│   ├── corpus_check.py              # регрессионный прогон размеченной выборки
-│   ├── purge.py                     # пакетное удаление с учётом лимитов Telegram
-│   ├── deleted_registry.py          # память о собственных удалениях
-│   ├── admin_cache.py               # TTL-кэш админов чата
-│   └── activity_tracker.py          # счётчик чистых сообщений → статус «одобренного»
+│   ├── text_cleaner.py              # normalization: homoglyphs, leet, zero-width, "c.r.y.p.t.o"
+│   ├── stopwords.py                 # categorized dictionary + context markers
+│   ├── antispam_engine.py           # smart detection: scoring, anti-FP, sanction choice
+│   ├── whitelist_service.py         # whitelist: local cache → Redis → DB
+│   ├── reputation_service.py        # CAS/LOLS blocklists: in-memory snapshot + cache
+│   ├── event_service.py             # log of detections and their admin review
+│   ├── sample_service.py            # labeled /spam and /ham examples
+│   ├── report_service.py            # counting member reports
+│   ├── duplicate_detector.py        # one text from several accounts
+│   ├── corpus_check.py              # regression run over the labeled sample
+│   ├── purge.py                     # batch deletion within Telegram limits
+│   ├── deleted_registry.py          # memory of the bot's own deletions
+│   ├── admin_cache.py               # TTL cache of chat admins
+│   └── activity_tracker.py          # clean-message counter → "approved" status
 ├── middlewares/
-│   ├── dependencies.py              # внедрение сервисов в хендлеры
-│   └── whitelist_middleware.py      # доверенные участники не доходят до модерации
+│   ├── dependencies.py              # injects services into handlers
+│   └── whitelist_middleware.py      # trusted members never reach moderation
 ├── handlers/
-│   ├── moderation.py                # санкции, безопасное удаление, журнал
-│   ├── admin_review.py              # карточка в админ-чате + кнопки отката
+│   ├── moderation.py                # sanctions, safe deletion, event log
+│   ├── admin_review.py              # card in the admin chat + rollback buttons
 │   ├── admin_training.py            # /spam, /ham, /samples, /report
-│   ├── cleanup.py                   # /clean и /purge — массовая очистка чата
-│   ├── flibusta_filter.py           # уборка «мусорных» ответов книжного бота
-│   ├── join_guard.py                # проверка новичков по блок-листам на входе
-│   ├── service_cleanup.py           # уборка «вступил в группу», «вышел» и прочего
+│   ├── cleanup.py                   # /clean and /purge — bulk chat cleanup
+│   ├── flibusta_filter.py           # removes "junk" replies of the book bot
+│   ├── join_guard.py                # checks newcomers against blocklists on join
+│   ├── service_cleanup.py           # removes "joined the group", "left" and so on
 │   └── admin_whitelist.py           # /whitelist_add, /whitelist_remove, /spamcheck
 ├── filters/admin.py                 # IsChatAdmin, IsSuperAdmin
-├── tools/regress.py                 # CLI: прогон выборки без запуска бота
+├── tools/regress.py                 # CLI: run the sample without starting the bot
 └── utils/
-    ├── logging.py                   # JSON-логи со структурными полями
-    ├── service_kinds.py             # группы служебных сообщений Telegram
-    └── telegram.py                  # безопасные delete/restrict/ban, разбор entities
+    ├── logging.py                   # JSON logs with structured fields
+    ├── service_kinds.py             # groups of Telegram service messages
+    └── telegram.py                  # safe delete/restrict/ban, entity parsing
 ```
 
-Поток обработки сообщения:
+Message processing flow:
 
 ```
-Update → DependenciesMiddleware → admin-роутеры (команды, кнопки разбора)
-                                → moderation-роутер
-                                     └─ WhitelistMiddleware (доверие)
-                                          │   статический whitelist → админ чата →
-                                          │   динамический whitelist → одобренный участник
+Update → DependenciesMiddleware → admin routers (commands, review buttons)
+                                → moderation router
+                                     └─ WhitelistMiddleware (trust)
+                                          │   static whitelist → chat admin →
+                                          │   dynamic whitelist → approved member
                                           └─ AntiSpamEngine.evaluate()
-                                               └─ санкция + журнал + карточка админам
+                                               └─ sanction + event log + admin card
 ```
 
-## Категории стоп-слов
+## Stop-word categories
 
 `casino` · `crypto_scam` · `adult` · `job_scam` · `drugs` · `account_trade` ·
 `finance_neutral`
 
-Словарь двуязычный: рассылки часто не содержат ни одного русского слова —
-«telegram accounts cheap store, get yours @bot». Английские правила вынесены в
-отдельные `*_en`, чтобы в логах было видно, чем именно поймали.
+The dictionary is bilingual: mailings often contain no Russian words at all —
+"telegram accounts cheap store, get yours @bot". English rules live in separate
+`*_en` rules so the logs show exactly what caught a message.
 
-Отдельная осторожность с английским в читательском чате: `financial freedom`,
-`passive income`, `work from home`, `investment plan`, `side hustle` и
-`stock market` — это названия книг и обычный разговор, поэтому они лежат в
-нейтральной категории и наказать не могут.
+English in a readers' chat needs extra care: `financial freedom`,
+`passive income`, `work from home`, `investment plan`, `side hustle` and
+`stock market` are book titles and ordinary conversation, so they sit in the
+neutral category and cannot trigger a punishment.
 
-`finance_neutral` (крипта, биткоин, трейдинг, финансы, заработок, криптография,
-passive income, financial freedom) —
-лексика легальных книжных запросов: вес символический, санкция по ней невозможна.
-`drugs` при наличии спам-фактора эскалируется сразу в бан.
-`account_trade` — торговля аккаунтами, номерами и накруткой.
+`finance_neutral` (crypto, bitcoin, trading, finance, earnings, cryptography,
+passive income, financial freedom) is the vocabulary of legitimate book requests:
+its weight is symbolic and it can never lead to a sanction.
+`drugs` combined with a spam factor escalates straight to a ban.
+`account_trade` covers selling accounts, phone numbers and fake engagement.
 
-## Запуск
+## Getting started
+
+### Docker (recommended)
+
+```bash
+cp .env.example .env          # Windows: copy .env.example .env
+# fill in BOT_TOKEN, POSTGRES_PASSWORD, REDIS_PASSWORD (letters and digits only)
+docker compose up -d --build
+docker compose logs -f bot
+```
+
+Three services start: `bot`, `postgres` (16) and `redis` (7). Inside compose,
+`DATABASE_URL` and `REDIS_URL` are built from `POSTGRES_*` and `REDIS_PASSWORD` —
+the local values in `.env` are ignored there. Migrations run when the bot starts.
+Database and Redis ports are not published; the bot runs as the unprivileged
+`appuser`, with a read-only filesystem and all capabilities dropped.
+
+```bash
+docker compose ps                  # status and healthchecks
+docker compose down                # stop (data stays in volumes)
+docker compose down -v             # stop and DELETE the database and Redis data
+```
+
+### Local
 
 ```bash
 python -m venv .venv && .venv\Scripts\activate      # Windows
-pip install -r requirements.txt
-copy .env.example .env                               # и заполнить BOT_TOKEN
+pip install -r requirements-dev.txt                  # runtime + pytest/ruff/mypy
+copy .env.example .env                               # and fill in BOT_TOKEN
 python main.py
 ```
 
-Бот работает и без Redis (кэш отключается, данные читаются из БД), и на SQLite
-(`sqlite+aiosqlite:///./moderation.db`). Для прода: PostgreSQL + Redis.
+The bot works without Redis (the cache is disabled and data is read from the DB)
+and on SQLite (`sqlite+aiosqlite:///./moderation.db`). For production: PostgreSQL + Redis.
 
-Права бота в чате: **удаление сообщений** и **блокировка пользователей**.
+Bot permissions in the chat: **delete messages** and **ban users**.
 
-## Схема базы и миграции
+## Database schema and migrations
 
-Схема управляется alembic. Бот накатывает миграции сам при старте, поэтому
-отдельного шага деплоя не нужно:
+The schema is managed by alembic. The bot applies migrations itself on startup,
+so no separate deployment step is needed:
 
 ```
 Схема БД готова  migrations=upgraded
 ```
 
-Отключить самонакат (если схему обновляет деплой): `RUN_MIGRATIONS_ON_STARTUP=false`,
-тогда перед запуском выполняйте `alembic upgrade head`.
+To disable this (if deployment updates the schema): `RUN_MIGRATIONS_ON_STARTUP=false`,
+then run `alembic upgrade head` before starting.
 
-После правки моделей в `bot/db/models.py`:
+After changing models in `bot/db/models.py`:
 
 ```bash
 alembic revision --autogenerate -m "add something"
 alembic upgrade head
 ```
 
-Три случая разбираются отдельно:
+The startup migrator handles each database state separately:
 
-| Состояние базы | Что делает бот |
+| Database state | What the bot does |
 |---|---|
-| пустая | накатывает все ревизии |
-| под управлением alembic | накатывает недостающие |
-| таблицы есть, alembic о них не знает | помечает текущей ревизией (`stamp`) и пишет предупреждение |
-| часть таблиц от старой версии | **останавливается** с понятной ошибкой — решение за человеком |
+| empty | applies all revisions |
+| managed by alembic | applies the missing ones |
+| tables exist, alembic does not know about them | marks it with the current revision (`stamp`) and logs a warning |
+| some tables from an older version | **stops** with a clear error — a human decides |
 
-Последний случай специально не автоматизирован: угадывать, что делать с чужими
-данными, бот не должен.
+The last case is deliberately not automated: the bot should not guess what to do
+with someone else's data.
 
-> `alembic.ini` держим строго в ASCII: alembic читает его в кодировке локали,
-> и кириллица в комментариях ломает запуск на Windows (проверено на этой машине).
+> Keep `alembic.ini` strictly ASCII: alembic reads it in the locale encoding, and
+> Cyrillic in comments breaks startup on Windows (verified on this machine).
 
-Тест `tests/test_migrations.py::test_migrations_match_models` падает, если модель
-изменили, а ревизию не добавили.
+`tests/test_migrations.py::test_migrations_match_models` fails if a model was
+changed without adding a revision.
 
-## Белый список
+## Whitelist
 
-Два уровня:
+Two levels:
 
-1. **Статический** — `.env`, меняется только деплоем. Сюда входят системные боты,
-   в том числе бот Флибусты (`FLIBUSTA_BOT_ID` / `FLIBUSTA_USERNAME`): он полностью
-   исключён из любых проверок.
-2. **Динамический** — БД + кэш Redis, управляется админами чата на лету.
+1. **Static** — `.env`, changed only by redeploying. It holds system bots,
+   including the Flibusta book bot (`FLIBUSTA_BOT_ID` / `FLIBUSTA_USERNAME`),
+   which is fully excluded from all checks.
+2. **Dynamic** — DB + Redis cache, managed by chat admins on the fly.
 
-Область действия записи: текущий чат либо (флаг `--global`, только для
-`SUPER_ADMIN_IDS`) все чаты сразу.
+Scope of an entry: the current chat or (flag `--global`, only for
+`SUPER_ADMIN_IDS`) all chats at once.
 
-### Команды администратора
+### Admin commands
 
-| Команда | Назначение |
+| Command | Purpose |
 |---|---|
-| `/whitelist_add` (ответом на сообщение) | добавить автора сообщения |
-| `/whitelist_add @username [причина]` | добавить по юзернейму |
-| `/whitelist_add 123456789 [причина]` | добавить по id |
-| `/whitelist_add @bot --global` | добавить во всех чатах (суперадмин) |
-| `/whitelist_remove @username \| id` | убрать из списка |
-| `/whitelist_list` | показать статические и динамические правила |
-| `/spamcheck <текст>` | прогнать текст через движок и увидеть разбор |
-| `/antispam_status` | текущие пороги и режим работы |
-| `/spam` (ответом) | удалить, забанить автора и сохранить пример спама |
-| `/ham` (ответом) | снять санкцию, пометить срабатывание ложным, сохранить пример |
-| `/samples` | размер собранной выборки |
-| `/clean N` · `/purge N` | удалить последние N сообщений |
-| `/clean all` | глубокая очистка (с подтверждением) |
-| `/regress` | прогнать выборку через текущие правила |
+| `/whitelist_add` (as a reply) | add the author of the message |
+| `/whitelist_add @username [reason]` | add by username |
+| `/whitelist_add 123456789 [reason]` | add by id |
+| `/whitelist_add @bot --global` | add in all chats (super admin) |
+| `/whitelist_remove @username \| id` | remove from the list |
+| `/whitelist_list` | show static and dynamic rules |
+| `/spamcheck <text>` | run text through the engine and see the breakdown |
+| `/antispam_status` | current thresholds and mode |
+| `/spam` (as a reply) | delete, ban the author and save a spam example |
+| `/ham` (as a reply) | lift the sanction, mark it a false positive, save an example |
+| `/samples` | size of the collected sample |
+| `/clean N` · `/purge N` | delete the last N messages |
+| `/clean all` | deep cleanup (with confirmation) |
+| `/regress` | run the sample through the current rules |
 
-Обычным участникам доступна одна команда — `/report` ответом на сообщение.
-Когда пожаловались `REPORT_THRESHOLD` разных человек (по умолчанию 2), в
-админ-чат приходит сигнал со ссылкой на сообщение. Повторная жалоба того же
-участника не считается, а сама команда удаляется из чата.
+Regular members have a single command — `/report` as a reply to a message.
+When `REPORT_THRESHOLD` different people (2 by default) have reported, the admin
+chat receives an alert with a link to the message. A repeated report from the same
+member is not counted, and the command itself is removed from the chat.
 
-## Разбор срабатываний и область проверки
+## Reviewing detections and check scope
 
-### Админ-чат модерации
+### Moderation admin chat
 
-Заведите приватный чат, добавьте туда бота и пропишите его id в `ADMIN_LOG_CHAT_ID`.
-По каждому срабатыванию туда приходит карточка: автор, скор, причина, сработавшие
-сигналы, текст сообщения — и три кнопки:
+Create a private chat, add the bot and put its id into `ADMIN_LOG_CHAT_ID`.
+Every detection produces a card there: author, score, reason, triggered signals,
+message text — and three buttons:
 
-| Кнопка | Что делает |
+| Button | What it does |
 |---|---|
-| ✅ Не спам | снимает мьют/бан, возвращает текст в чат, помечает событие ложным срабатыванием |
-| ✔️ Верно | подтверждает решение и закрывает карточку |
-| ➕ В белый список | добавляет автора в белый список этого чата |
+| ✅ Not spam | lifts the mute/ban, returns the text to the chat, marks the event as a false positive |
+| ✔️ Correct | confirms the decision and closes the card |
+| ➕ Whitelist | adds the author to this chat's whitelist |
 
-Кнопки доступны админам исходного чата и суперадминам бота. Все решения пишутся
-в `moderation_events` (`false_positive`, `reviewed_by`, `reviewed_at`) — это
-материал для правки правил: `EventService.recent_false_positives()`.
+The buttons are available to admins of the source chat and to the bot's super
+admins. All decisions are stored in `moderation_events` (`false_positive`,
+`reviewed_by`, `reviewed_at`) — material for tuning rules:
+`EventService.recent_false_positives()`.
 
-Без этого чата ложные срабатывания остаются невидимыми: участник просто молча
-уходит. Поэтому `NOTIFY_CHAT` рекомендуется выключить и разбирать всё здесь.
+Without this chat false positives stay invisible: the member just silently
+leaves. That is why `NOTIFY_CHAT` is recommended to be off, with everything
+reviewed here.
 
-### Одобренные участники
+### Approved members
 
-Счётчик растёт **только на чистых сообщениях**, срабатывание антиспама его
-обнуляет. После `APPROVED_AFTER_MESSAGES` (по умолчанию 7) участник считается
-одобренным и не проверяется вовсе — так работает `--first-messages-count` у
-tg-spam, и это главный приём против ложных срабатываний у старожилов чата.
-Пока сообщений меньше `NEW_MEMBER_MESSAGES` (5), участник считается новичком
-и получает +1 к спам-скору.
+The counter grows **only on clean messages**; an anti-spam detection resets it.
+After `APPROVED_AFTER_MESSAGES` (7 by default) a member is approved and not checked
+at all — this is how `--first-messages-count` works in tg-spam, and it is the main
+defence against false positives for long-standing members.
+While a member has fewer than `NEW_MEMBER_MESSAGES` (5) messages, they count as a
+newcomer and get +1 to the spam score.
 
-Во время атаки включается `PARANOID_MODE=true` — проверяются все.
-Если Redis недоступен, одобренных нет и проверяются тоже все: шумно, но безопасно.
+During an attack, `PARANOID_MODE=true` checks everyone.
+If Redis is unavailable, nobody is approved and everyone is checked: noisy, but safe.
 
-## Профиль автора
+## Author profile
 
-Спамеры часто оставляют текст безобидным, а весь оффер выносят в имя: «КАЗИНО
-ВУЛКАН», «Заработок 24/7», `@promo_casino`. Поэтому имя и username проверяются
-тем же словарём, что и текст.
+Spammers often keep the text harmless and move the whole offer into the name:
+"CASINO VULKAN", "Earn 24/7", `@promo_casino`. So the name and username are
+checked with the same dictionary as the text.
 
-Правила те же, что и для текста, — имя само по себе не наказывается:
+The rules are the same as for text — a name alone is not punished:
 
-* «КАЗИНО ВУЛКАН» + «привет» → 3.5 балла, сообщение проходит;
-* «КАЗИНО ВУЛКАН» + любая ссылка → 7.5 балла, удаление;
-* «Криптоведьмак», «Биткоин Иваныч», «Трейдер Пётр» → **ничего**: нейтральная
-  финансовая лексика в имени игнорируется, это обычные читатели;
-* «Интим досуг 18+» + `@вася привет` → 5.5 балла, сообщение проходит. Граница
-  выбрана осознанно: ответ собеседнику не должен стоить участнику сообщения.
+* "CASINO VULKAN" + "hi" → 3.5 points, the message passes;
+* "CASINO VULKAN" + any link → 7.5 points, deletion;
+* "Cryptowitcher", "Bitcoin Ivanych", "Trader Peter" → **nothing**: neutral
+  financial vocabulary in a name is ignored, these are ordinary readers;
+* "Intimate leisure 18+" + `@vasya hi` → 5.5 points, the message passes. This
+  boundary is intentional: replying to someone should not cost a member a message.
 
-Для сообщений от имени канала берётся название канала и его username.
-Проверить чужой профиль вручную: `/spamcheck` ответом на сообщение — в разборе
-появится строка «Профиль».
+For messages sent on behalf of a channel, the channel title and username are used.
+To check someone's profile manually: `/spamcheck` as a reply — the breakdown will
+include a "Profile" line.
 
-## Замкнутый цикл: разметка → прогон
+## Hidden advertising: leetspeak and bots
 
-`/spam` и `/ham` не просто наказывают и откатывают — они копят выборку. Команда
-`/regress` прогоняет её через текущие правила и показывает, что изменилось:
+Spam networks disguise text and lead people into a bot:
+`super h0t vide0s avaible on this bot - @llkaebot`. The words are "broken" with
+digits, and all the actual content is hidden inside the bot.
+
+* **Leetspeak.** The normalizer builds text variants with digits and symbols
+  replaced by letters: `0→o`, `1→i/l/и`, `3→e`, `4→a`, `5→s`, `7→t`, `@→a`, `$→s` —
+  separately for Latin and Cyrillic. `h0t vide0s` becomes `hot videos`,
+  `в1де0` becomes `видео`. A digit inside a word (`h0t`) is treated as evasion;
+  digits at word edges (`mp3`, `fb2`, `4k`, `1984`) are not.
+* **Bot mentions.** Telegram requires bot usernames to end in `bot`.
+  `@…bot`, a disguised `@promo_b0t` and a `t.me/…bot` link produce a hard factor
+  weighted `BOT_MENTION_WEIGHT` (4.5) — more than a regular mention (2.0) — and
+  book intent does not soften it. Trusted bots (Flibusta, static whitelist) are
+  not counted.
+* **Dictionary.** Rules `adult_video_en` / `adult_video_ru` and calls to action
+  such as `available on this bot`, `in our bot`, `переходи в бота`, `в нашем боте`.
+
+A single bot mention does not cause deletion: in a book chat people recommend bots
+all the time. Combined with a topic or a call to action it is deleted, and the
+example above scores 14 points. To delete any third-party bot mention, set
+`BOT_MENTION_WEIGHT=6`.
+
+## Closed loop: labeling → regression run
+
+`/spam` and `/ham` do more than punish and roll back — they build a labeled sample.
+`/regress` runs it through the current rules and shows what changed
+(bot output is in Russian):
 
 ```
 ⚠️ Прогон выборки · 8 примеров за 2 мс
@@ -262,227 +329,235 @@ tg-spam, и это главный приём против ложных сраб�
 • 3.0 · below_threshold — Здравствуйте! Ищу людей для сотрудничества, подробности в лс
 ```
 
-То же самое без запуска бота — при правке словаря это удобнее:
+The same without starting the bot — handier while editing the dictionary:
 
 ```bash
 python -m bot.tools.regress
 python -m bot.tools.regress --examples 20
 ```
 
-Код возврата 1, если есть **ложные срабатывания** — прогон можно поставить в CI.
-Пропущенный спам код возврата не меняет: это про полноту, а доверие к боту рушат
-именно ложные срабатывания.
+The exit code is 1 if there are **false positives**, so the run can be used in CI.
+Missed spam does not change the exit code: that is about recall, while trust in the
+bot is destroyed precisely by false positives.
 
-Прогон намеренно использует **только текст**: без блок-листов, дубликатов и
-профиля. Так измеряется качество самих правил, и два запуска подряд дают
-одинаковый результат.
+The run intentionally uses **text only**: no blocklists, duplicates or profile.
+This measures the quality of the rules themselves, and two consecutive runs give
+the same result.
 
-## Массовая очистка чата
+## Bulk chat cleanup
 
-`/clean 300` — удалить последние 300 сообщений, `/clean all` — глубокую уборку
-(по умолчанию 1000). Синоним — `/purge`.
+`/clean 300` deletes the last 300 messages, `/clean all` does a deep cleanup
+(1000 by default). Alias: `/purge`.
 
-Три предохранителя вокруг необратимой команды:
+Three safeguards around an irreversible command:
 
-1. **права проверяются заново** через `get_chat_member` — кэш админов живёт пять
-   минут, для удаления сотен сообщений этого мало. Владельцу можно всё,
-   администратору нужно право «Удаление сообщений»;
-2. **глубина ограничена потолком** `CLEAN_MAX_DEPTH`: опечатка `/clean 999999`
-   не выносит историю целиком;
-3. **подтверждение кнопкой** начиная с `CLEAN_CONFIRM_THRESHOLD` (200).
-   Нажать может только тот, кто запустил.
+1. **permissions are re-checked** via `get_chat_member` — the admin cache lives
+   five minutes, which is not enough for deleting hundreds of messages. The owner
+   may do anything; an administrator needs the "Delete messages" right;
+2. **depth is capped** by `CLEAN_MAX_DEPTH`: a typo like `/clean 999999`
+   does not wipe the whole history;
+3. **button confirmation** starting from `CLEAN_CONFIRM_THRESHOLD` (200).
+   Only the person who started it can press it.
 
-Отчёт и сама команда исчезают через `CLEAN_NOTICE_TTL` секунд, чтобы уборка не
-оставляла после себя новый мусор.
+The report and the command itself disappear after `CLEAN_NOTICE_TTL` seconds, so
+the cleanup does not leave new clutter behind.
 
-### Чего Telegram не позволяет
+### What Telegram does not allow
 
-| Ограничение | Как учтено |
+| Limitation | How it is handled |
 |---|---|
-| `deleteMessages` принимает максимум 100 id | id режутся на пакеты по 100, между ними пауза `CLEAN_BATCH_PAUSE` |
-| удалять можно только сообщения **не старше 48 часов** | три упавших пакета подряд — значит упёрлись в стену, уборка останавливается |
-| API не отдаёт ботам список сообщений чата | id перебираются назад от команды — других способов нет |
-| ответ не говорит, сколько сообщений реально существовало | в отчёте честное «удалено **до** N», а пропущенные считаются отдельно |
+| `deleteMessages` accepts at most 100 ids | ids are split into batches of 100 with a `CLEAN_BATCH_PAUSE` pause between them |
+| only messages **up to 48 hours old** can be deleted | three failed batches in a row mean the wall is reached, and cleanup stops |
+| the API does not give bots a list of chat messages | ids are walked backwards from the command — there is no other way |
+| the response does not say how many messages actually existed | the report honestly says "deleted **up to** N", and skipped ones are counted separately |
 
-Поэтому отчёт выглядит так:
+So the report looks like this ("chat cleaned — up to 200 deleted, 800 skipped
+(older than 48 hours or already deleted), older messages start from here"):
 
 ```
 🧹 Чат очищен — удалено до 200, 800 пропущено (старше 48 часов или уже удалены),
    дальше начинаются сообщения старше 48 часов.
 ```
 
-## Книжный бот: иммунитет и уборка отказов
+## Book bot: immunity and cleanup of failed searches
 
-Бот Флибусты **неприкосновенен**: его сообщения не проверяются антиспамом, ему
-не выдаются санкции и не начисляются спам-баллы. Защита стоит в двух местах —
-`WhitelistMiddleware` не пускает его сообщения в модерацию вообще, а в самом
-обработчике первой строкой стоит проверка `user_id == FLIBUSTA_BOT_ID`.
+The Flibusta bot is **untouchable**: its messages are not checked by the
+anti-spam, it receives no sanctions and no spam points. The protection sits in two
+places — `WhitelistMiddleware` never lets its messages into moderation, and the
+handler itself starts with a `user_id == FLIBUSTA_BOT_ID` check.
 
-При этом два вида его ответов в чате не нужны, и они убираются (`FLIBUSTA_CLEANUP`):
+Two kinds of its replies are still unwanted in the chat, and they are removed
+(`FLIBUSTA_CLEANUP`):
 
-| Что | Как определяется |
+| What | How it is detected |
 |---|---|
-| отказ поиска | «не найдено книг», «ничего не найдено», «По запросу …» с ❌ |
-| ответ в пустоту | запрос пользователя уже удалён антиспамом |
+| failed search | "не найдено книг", "ничего не найдено" ("no books found"), "По запросу …" with ❌ |
+| reply into the void | the user's request was already deleted by the anti-spam |
 
-Второй случай устроен так: Telegram не сообщает ботам об удалении сообщений,
-поэтому бот помнит собственные удаления сам — `DeletedMessageRegistry` хранит
-их час. Когда приходит ответ книжного бота на исчезнувший запрос, цитата
-убирается следом.
+The second case works like this: Telegram does not notify bots about deleted
+messages, so the bot remembers its own deletions — `DeletedMessageRegistry` keeps
+them for an hour. When the book bot replies to a vanished request, the reply is
+removed too.
 
-## Уборка служебных сообщений
+## Service message cleanup
 
-«Вступил в группу», «вышел из группы», «сменил название» — в живом чате этого
-шума больше, чем разговора. Бот удаляет их сам.
+"Joined the group", "left the group", "changed the title" — in an active chat there
+is more of this noise than conversation. The bot removes it.
 
-Настраивается группами в `SERVICE_CLEANUP`:
+Configured by groups in `SERVICE_CLEANUP`:
 
-| Группа | Что убирает |
+| Group | What it removes |
 |---|---|
-| `join` | вступил в группу |
-| `leave` | вышел из группы |
-| `title` | сменилось название чата |
-| `photo` | сменилась аватарка или фон |
-| `pin` | «закрепил сообщение» — по умолчанию **не** удаляется |
-| `videochat` | видеочат начался, закончился, назначен |
-| `forum` | создание и правка тем форума |
-| `boost` | буст чата |
-| `giveaway`, `gift` | розыгрыши и подарки |
-| `created` | создание группы |
-| `other` | остальной служебный шум |
+| `join` | joined the group |
+| `leave` | left the group |
+| `title` | chat title changed |
+| `photo` | chat photo or background changed |
+| `pin` | "pinned a message" — **not** removed by default |
+| `videochat` | video chat started, ended, scheduled |
+| `forum` | forum topic creation and edits |
+| `boost` | chat boost |
+| `giveaway`, `gift` | giveaways and gifts |
+| `created` | group created |
+| `other` | remaining service noise |
 
-Особые значения: `all` — всё, `none` — выключить уборку совсем.
+Special values: `all` — everything, `none` — disable cleanup entirely.
 
-Два правила, которые нельзя переопределить настройкой:
+Two rules that cannot be overridden by configuration:
 
-* **платежи не удаляются никогда** (`successful_payment`, `refunded_payment`) —
-  это финансовые записи;
-* **служебные сообщения о переезде группы в супергруппу тоже остаются** — на них
-  завязана связка старого и нового чата.
+* **payments are never deleted** (`successful_payment`, `refunded_payment`) —
+  they are financial records;
+* **messages about a group migrating to a supergroup also stay** — the link between
+  the old and new chat depends on them.
 
-В режиме `DRY_RUN=true` служебные сообщения не удаляются, как и всё остальное.
-Опечатка в названии группы не роняет бота: неизвестное имя пропускается с
-предупреждением в лог и списком доступных значений.
+With `DRY_RUN=true` service messages are not deleted, like everything else.
+A typo in a group name does not crash the bot: an unknown name is skipped with a
+warning in the log listing the available values.
 
-## Детектор рассылок
+## Mailing detector
 
-Самая неудобная для словаря рассылка — та, где нет ни ссылок, ни стоп-слов:
-«Здравствуйте! Ищу людей для сотрудничества, подробности расскажу лично» с
-нескольких свежих аккаунтов. Видно её только по повторению.
+The mailing hardest for a dictionary is one with neither links nor stop words:
+"Hello! Looking for people to collaborate, details in private" sent from several
+fresh accounts. It can only be seen through repetition.
 
-Считаются **разные авторы одного текста**, а не число повторов: человек,
-поднявший свой книжный запрос второй раз за вечер, ничего не теряет.
+What is counted is **different authors of the same text**, not the number of
+repeats: a person who bumps their book request a second time in an evening loses
+nothing.
 
-Отпечаток берётся от склеенной формы текста — регистр, пробелы, пунктуация,
-эмодзи и повторы символов отбрасываются, поэтому размножение рассылки случайными
-смайликами её не спасает.
+The fingerprint is taken from the squashed form of the text — case, spaces,
+punctuation, emoji and repeated characters are dropped, so padding a mailing with
+random emoji does not save it.
 
-Вес растёт с числом аккаунтов и ограничен сверху:
+The weight grows with the number of accounts and is capped:
 
-| Разных авторов | Вес | Что происходит |
+| Different authors | Weight | What happens |
 |---|---|---|
-| 1–2 | 0 | ничего |
-| 3 | 4.0 | пока мало для удаления, но включает остальные сигналы |
-| 4 | 8.0 | удаление |
-| 5 | 12.0 | удаление + мьют |
-| 9+ | 12.0 | потолок |
+| 1–2 | 0 | nothing |
+| 3 | 4.0 | not enough to delete yet, but enables other signals |
+| 4 | 8.0 | deletion |
+| 5 | 12.0 | deletion + mute |
+| 9+ | 12.0 | cap |
 
-Сообщения короче `DUPLICATE_MIN_LENGTH` (40 символов) не проверяются: «спасибо»
-и «ап» совпадают у всех. Книжное намерение рассылку не оправдывает — слово «ищу»
-внутри неё ничего не меняет.
+Messages shorter than `DUPLICATE_MIN_LENGTH` (40 characters) are not checked:
+"thanks" and "up" match for everyone. Book intent does not excuse a mailing — the
+word "looking for" inside it changes nothing.
 
-> Первые участники рассылки успевают её отправить: порог срабатывает на третьем-
-> четвёртом аккаунте. Их сообщения удаляются вручную — `/spam` ответом.
+> The first accounts of a mailing do get their messages through: the threshold
+> triggers on the third or fourth account. Remove those manually with `/spam` as a reply.
 
-## Внешние блок-листы
+## External blocklists
 
-Два независимых публичных реестра спамеров, оба без ключей:
+Two independent public spammer registries, both keyless:
 
-* **LOLS** (`api.lols.bot/account?id=`) — онлайн-запрос с таймаутом 2 с,
-  ответ кэшируется в Redis. Запрашивается только на первом сообщении автора
-  и при входе в чат.
-* **CAS** (`api.cas.chat/export.csv`) — снимок списка целиком. На момент
-  проверки это 1 270 682 id; храним отсортированным `array("q")` в процессе:
-  **9.7 МБ памяти** и поиск делением пополам. Обновляется в фоне раз в 12 часов,
-  первая загрузка не задерживает старт бота.
+* **LOLS** (`api.lols.bot/account?id=`) — an online request with a 2 s timeout,
+  cached in Redis. Queried only on an author's first message and on joining the chat.
+* **CAS** (`api.cas.chat/export.csv`) — a full snapshot of the list. At the time of
+  checking it held 1,270,682 ids, stored as a sorted `array("q")` in-process:
+  **9.7 MB of memory** and binary search. Refreshed in the background every
+  12 hours; the first download does not delay bot startup.
 
-Точечная ручка CAS (`/check`) намеренно не используется: она не находит даже
-те id, которые есть в её собственном экспорте.
+The CAS point lookup endpoint (`/check`) is intentionally not used: it fails to
+find even ids present in its own export.
 
-Попадание в блок-лист — **сигнал с весом `REPUTATION_WEIGHT` (5.0), а не приговор**.
-Автор из блок-листа, написавший «привет», наберёт 5.0 при пороге удаления 6.0 и
-спокойно пройдёт. А вот то же «казино бонус» без единой ссылки, которое обычно
-проходит по правилу «нет спам-фактора — нет наказания», с блок-листом даст 9.0
-и уйдёт в мьют.
+A blocklist hit is **a signal weighted `REPUTATION_WEIGHT` (5.0), not a verdict**.
+A blocklisted author who writes "hi" gets 5.0 with a deletion threshold of 6.0 and
+passes. But a "casino bonus" message without a single link, which normally passes
+under the "no spam factor — no punishment" rule, scores 9.0 with a blocklist hit
+and gets muted.
 
-На входе в чат (`chat_member`) новичок сверяется с реестрами до первого сообщения.
-По умолчанию бот не банит, а пишет в админ-чат: `REPUTATION_AUTOBAN=true` включает
-автобан, если вы готовы доверять базам.
+On joining the chat (`chat_member`) a newcomer is checked against the registries
+before their first message. By default the bot does not ban but notifies the admin
+chat: `REPUTATION_AUTOBAN=true` enables auto-ban if you are ready to trust the databases.
 
-## Настройка чувствительности
+## Sensitivity tuning
 
-| Переменная | По умолчанию | Смысл |
+| Variable | Default | Meaning |
 |---|---|---|
-| `REQUIRE_SPAM_FACTOR` | `true` | главный анти-FP предохранитель |
-| `DELETE_THRESHOLD` | `6.0` | порог удаления |
-| `MUTE_THRESHOLD` | `9.0` | порог mute |
-| `BAN_THRESHOLD` | `13.0` | порог бана |
-| `MUTE_DURATION` | `3600` | длительность mute, сек. |
-| `SAFE_DOMAINS` | книжные ресурсы | ссылки-исключения |
-| `DRY_RUN` | `false` | режим наблюдения: считать и логировать, ничего не удалять |
-| `ADMIN_LOG_CHAT_ID` | — | приватный чат разбора срабатываний |
-| `APPROVED_AFTER_MESSAGES` | `7` | после скольких чистых сообщений участник не проверяется |
-| `NEW_MEMBER_MESSAGES` | `5` | до скольких сообщений участник считается новичком |
-| `PARANOID_MODE` | `false` | проверять всех, включая одобренных |
-| `REPUTATION_ENABLED` | `true` | сверять авторов с CAS и LOLS |
-| `REPUTATION_WEIGHT` | `5.0` | вес попадания в блок-лист |
-| `REPUTATION_AUTOBAN` | `false` | банить по блок-листу сразу |
-| `REPORT_THRESHOLD` | `2` | сколько жалоб зовут админов |
-| `DUPLICATE_THRESHOLD` | `3` | сколько разных авторов одного текста — рассылка |
-| `DUPLICATE_WINDOW` | `3600` | окно наблюдения за дубликатами, сек. |
-| `DUPLICATE_MIN_LENGTH` | `40` | короче — не проверяем |
-| `SERVICE_CLEANUP` | все группы кроме `pin` | какие служебные сообщения убирать |
-| `CLEAN_DEFAULT_DEPTH` | `1000` | глубина `/clean all` |
-| `CLEAN_MAX_DEPTH` | `5000` | потолок глубины очистки |
-| `CLEAN_CONFIRM_THRESHOLD` | `200` | с какой глубины спрашивать подтверждение |
-| `FLIBUSTA_CLEANUP` | `true` | убирать отказы книжного бота |
+| `REQUIRE_SPAM_FACTOR` | `true` | the main anti-false-positive safeguard |
+| `DELETE_THRESHOLD` | `6.0` | deletion threshold |
+| `MUTE_THRESHOLD` | `9.0` | mute threshold |
+| `BAN_THRESHOLD` | `13.0` | ban threshold |
+| `MUTE_DURATION` | `3600` | mute duration, seconds |
+| `SAFE_DOMAINS` | book resources | link exceptions |
+| `DRY_RUN` | `false` | observation mode: score and log, delete nothing |
+| `ADMIN_LOG_CHAT_ID` | — | private chat for reviewing detections |
+| `APPROVED_AFTER_MESSAGES` | `7` | clean messages after which a member is no longer checked |
+| `NEW_MEMBER_MESSAGES` | `5` | messages below which a member counts as a newcomer |
+| `PARANOID_MODE` | `false` | check everyone, including approved members |
+| `REPUTATION_ENABLED` | `true` | check authors against CAS and LOLS |
+| `REPUTATION_WEIGHT` | `5.0` | weight of a blocklist hit |
+| `REPUTATION_AUTOBAN` | `false` | ban immediately on a blocklist hit |
+| `REPORT_THRESHOLD` | `2` | how many reports summon admins |
+| `DUPLICATE_THRESHOLD` | `3` | how many different authors of one text make a mailing |
+| `DUPLICATE_WINDOW` | `3600` | duplicate observation window, seconds |
+| `DUPLICATE_MIN_LENGTH` | `40` | shorter messages are not checked |
+| `BOT_MENTION_WEIGHT` | `4.5` | weight of a third-party bot mention (`@..._bot`, `t.me/...bot`); `>= DELETE_THRESHOLD` deletes any |
+| `SERVICE_CLEANUP` | all groups except `pin` | which service messages to remove |
+| `CLEAN_DEFAULT_DEPTH` | `1000` | depth of `/clean all` |
+| `CLEAN_MAX_DEPTH` | `5000` | cleanup depth cap |
+| `CLEAN_CONFIRM_THRESHOLD` | `200` | depth from which confirmation is required |
+| `FLIBUSTA_CLEANUP` | `true` | remove failed searches of the book bot |
 
-Новые правила добавляются в `bot/services/stopwords.py` через `KeywordRule.build(...)`
-— движок трогать не нужно. Обкатывать изменения удобно командой `/spamcheck`
-и в режиме `DRY_RUN=true`.
+New rules are added in `bot/services/stopwords.py` via `KeywordRule.build(...)` —
+the engine does not need to change. Try changes with `/spamcheck` and in
+`DRY_RUN=true` mode.
 
-## Устойчивость
+## Resilience
 
-* Ошибки Telegram API (`TelegramBadRequest`, `TelegramForbiddenError`,
-  `TelegramRetryAfter`) обрабатываются — модерация не падает из-за удалённого
-  или слишком старого сообщения.
-* Недоступность Redis деградирует до чтения из БД, недоступность БД — до пустого
-  белого списка с ошибкой в логе; бот продолжает работать.
-* Все события модерации пишутся в `moderation_events` и в структурированный JSON-лог.
+* Telegram API errors (`TelegramBadRequest`, `TelegramForbiddenError`,
+  `TelegramRetryAfter`) are handled — moderation does not fail because of a deleted
+  or too-old message.
+* Redis unavailability degrades to reading from the DB; DB unavailability degrades
+  to an empty whitelist with an error in the log; the bot keeps working.
+* All moderation events are written to `moderation_events` and a structured JSON log.
 
-## Тесты
+## Tests
 
 ```bash
-pytest -q                                  # весь набор
-pytest -q --cov=bot --cov-report=term-missing   # с отчётом о покрытии
-ruff check .                               # линтер (настройки в pyproject.toml)
-python tests/test_antispam_engine.py       # любой файл запускается и без pytest
-python -m bot.tools.regress                # прогон размеченной выборки
+pytest -q                                  # full suite
+pytest -q --cov=bot --cov-report=term-missing   # with coverage report
+ruff check .                               # linter (settings in pyproject.toml)
+python tests/test_antispam_engine.py       # any file also runs without pytest
+python -m bot.tools.regress                # run the labeled sample
 ```
 
-246 тестов, покрытие пакета `bot` — 87%. Покрытие: нормализация текста, анти-FP сценарии книжных запросов,
-детект спама, загрузка настроек из `.env`, белый список, блок-листы, проверку профиля
-и детектор рассылок (включая деградацию при сбое Redis и сети), middleware
-доверия, область одобренных,
-журнал событий, откат ложного срабатывания, ручная разметка и жалобы, проверка
-новичков на входе, миграции схемы, форматтеры логов, безопасные обёртки над Bot API
-(включая ветки с ошибками Telegram), а также сквозной прогон апдейтов через
-настоящий диспетчер на подменённом Bot API.
-`tests/test_regressions.py` — по одному тесту на каждый найденный баг,
-`tests/test_english_spam.py` — разбор пропущенной в чате англоязычной рассылки.
+256 tests, `bot` package coverage 87%. Covered: text normalization, anti-false-positive
+scenarios for book requests, spam detection, loading settings from `.env`, the
+whitelist, blocklists, profile checks and the mailing detector (including
+degradation on Redis and network failures), the trust middleware, approved-member
+scope, the event log, false-positive rollback, manual labeling and reports,
+newcomer checks on join, schema migrations, log formatters, safe Bot API wrappers
+(including Telegram error branches), and an end-to-end run of updates through a
+real dispatcher on a mocked Bot API.
+`tests/test_regressions.py` — one test per bug found,
+`tests/test_english_spam.py` — an English mailing that slipped through in the chat,
+`tests/test_bot_adult_spam.py` — leetspeak and 18+ advertising via bots.
 
-> Тесты изолированы от локального `.env` и переменных окружения
-> (`tests/conftest.py` + `_env_file=None`): понизили у себя порог — прогон от
-> этого не меняется.
+> Tests are isolated from the local `.env` and environment variables
+> (`tests/conftest.py` + `_env_file=None`): lowering a threshold locally does not
+> change the run.
 
-Что дальше по плану — `docs/RECOMMENDATIONS.md`.
+Roadmap: `docs/RECOMMENDATIONS.md` (in Russian).
+
+## License
+
+[MIT](LICENSE)

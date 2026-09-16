@@ -1,0 +1,33 @@
+# Секреты — никогда не в образ
+.env
+.env.*
+!.env.example
+
+# Git и IDE
+.git
+.gitignore
+.idea/
+.vscode/
+
+# Окружение и кэши
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Локальные данные
+*.db
+*.sqlite3
+*.log
+
+# В рантайме не нужны
+tests/
+docs/
+Dockerfile
+docker-compose*.yml
+.dockerignore

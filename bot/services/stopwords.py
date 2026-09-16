@@ -228,6 +228,20 @@ _ADULT: Final[Sequence[KeywordRule]] = (
             r"эротическ\w* (канал|бот|фото)", r"откровенн\w* фото", r"без цензуры бот",
         ],
     ),
+    KeywordRule.build(
+        "adult_video_ru",
+        Category.ADULT,
+        4.5,
+        [
+            # «Горячие видео в боте», «слив фото девушек», «видео 18+».
+            r"горяч\w* (видео|видос|девушк|девочк|малышк|контент|ролик)",
+            r"(интим|эротик|пикантн)\w* (видео|видос|ролик|контент)",
+            r"видео ?18 ?\+", r"18 ?\+ ?(видео|видос|фото|ролик)",
+            r"слив\w* (фото|видео) (девушек|девочек|одноклассниц|блогерш)",
+            r"(голые|обнаженн\w*) (девушк|девочк|фото|видео)",
+            r"секс ?(видео|чат)", r"вебкам\w*",
+        ],
+    ),
 )
 
 _JOB_SCAM: Final[Sequence[KeywordRule]] = (
@@ -350,8 +364,26 @@ _ENGLISH_SCAM: Final[Sequence[KeywordRule]] = (
         Category.ADULT,
         4.5,
         [
-            r"sex chat", r"hot (girls|photos|videos)", r"adult content", r"18\+ content",
-            r"leaked (nudes|photos)", r"webcam girls", r"dating for sex",
+            # «hot videos», «adult content» и прочие «прилагательное + видео»
+            # живут в `adult_video_en` — здесь их нет, чтобы не считать дважды.
+            r"sex chat", r"leaked (nudes|photos)", r"webcam girls", r"dating for sex",
+        ],
+    ),
+    KeywordRule.build(
+        "adult_video_en",
+        Category.ADULT,
+        4.5,
+        [
+            # Завуалированная реклама: «super h0t vide0s avaible on this bot».
+            # Leet и гомоглифы снимает нормализатор, здесь — только лексика.
+            r"hot (girls?|babes?|videos?|vids?|pics?|photos?|content|chat|clips?|stuff)",
+            r"(sexy|horny|naughty|naked|nude) (girls?|babes?|videos?|vids?|pics?|photos?"
+            r"|content|chat|singles?|teens?)",
+            # Правило не должно пересекаться с `adult_hard` и `adult_en`:
+            # одно и то же выражение, пойманное двумя правилами, удваивает вес.
+            r"(adult|xxx|nsfw|18 ?\+|erotic\w*|spicy|private|uncensored)"
+            r" (videos?|vids?|content|pics?|photos?|clips?|channel|bot|chat)",
+            r"nsfw", r"cam ?girls?", r"sex ?(videos?|bot|tape)", r"hookups?",
         ],
     ),
     KeywordRule.build(
@@ -403,12 +435,22 @@ CALL_TO_ACTION_RE: Final[re.Pattern[str]] = compile_alternation(
         r"осталось \d+ мест", r"набор закрывается", r"пиши слово", r"ставь ?\+",
         r"подпишись (на|и)", r"вступаи в", r"переходи в (бот|канал)", r"жду в лс",
         r"научу зарабатывать", r"пишите в телеграм", r"свяжись со мнои",
+        # Реклама через бота: сам текст пустой, всё «содержимое» — в боте.
+        # «Пиши в бота» и «ищи в боте» сюда сознательно не входят: так в
+        # книжном чате объясняют, как пользоваться Флибустой.
+        r"(переходи|заходи|залетаи|запускаи)(те)? (в|на) бот\w*",
+        r"в (нашем|моем) боте", r"(смотри|забираи)(те)? в боте",
+        r"(ссылка|доступ|видео|фото) в боте", r"жми (старт|start)",
         # Англоязычные призывы: рассылки часто вообще не содержат русских слов.
         r"get yours?", r"click (here|the link|below)", r"(dm|pm|text|message) me",
         r"contact me", r"hit me up", r"write (to )?me", r"join (now|us|our)",
         r"check (my )?bio", r"link in bio", r"(order|buy|shop|sign up|register) now",
         r"limited (offer|time)", r"act now", r"don'?t miss", r"free trial",
         r"start earning", r"tap (the )?link", r"more info in",
+        # «...avaible on this bot», «check my bot», «start the bot».
+        r"(av[a-z]{2,5}ble|here|inside|waiting|free) (on|in|at|via) (this|my|our|the) bot",
+        r"(on|in|via) (my|our) bot", r"(start|open|check) (my|our) bot",
+        r"go to (my|our) bot", r"(watch|see) (it |them |more )?(in|on) (the |my |our )?bot",
     )
 )
 

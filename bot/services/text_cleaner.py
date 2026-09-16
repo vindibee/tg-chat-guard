@@ -39,9 +39,24 @@ _DELEET: Final[dict[str, str]] = {
     "©": "с", "€": "е", "₽": "р", "¥": "у", "§": "s", "*": "",
 }
 
+#: Leet-подстановки для латиницы: «h0t vide0s», «0nlyf4ns», «s3x».
+#: Отдельная таблица нужна потому, что `_DELEET` меняет цифры на кириллицу,
+#: и в чисто английском тексте получалась бы каша «hоt videоs» из двух алфавитов.
+_DELEET_LAT: Final[dict[str, str]] = {
+    "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b", "9": "g",
+    "@": "a", "$": "s", "!": "i", "|": "l", "€": "e", "©": "c", "§": "s", "*": "",
+}
+#: «1» в leet — это и «i» (h1t), и «l» (on1y), а в русском — «и» (в1део):
+#: дополнительные варианты строим отдельно и только когда в тексте есть «1».
+_DELEET_LAT_L: Final[dict[str, str]] = {**_DELEET_LAT, "1": "l", "!": "l"}
+_DELEET_CYR_I: Final[dict[str, str]] = {**_DELEET, "1": "и", "!": "и"}
+
 _TRANSLATE_LAT_TO_CYR: Final[dict[int, str]] = str.maketrans(_LAT_TO_CYR)
 _TRANSLATE_CYR_TO_LAT: Final[dict[int, str]] = str.maketrans(_CYR_TO_LAT)
 _TRANSLATE_DELEET: Final[dict[int, str]] = str.maketrans(_DELEET)
+_TRANSLATE_DELEET_LAT: Final[dict[int, str]] = str.maketrans(_DELEET_LAT)
+_TRANSLATE_DELEET_LAT_L: Final[dict[int, str]] = str.maketrans(_DELEET_LAT_L)
+_TRANSLATE_DELEET_CYR_I: Final[dict[int, str]] = str.maketrans(_DELEET_CYR_I)
 
 #: Комбинирующие диакритики — ими «пачкают» буквы, чтобы обойти фильтр.
 _COMBINING_RE: Final[re.Pattern[str]] = re.compile(
@@ -54,6 +69,12 @@ _CYRILLIC_RE: Final[re.Pattern[str]] = re.compile(r"[а-яёіѕ]")
 _LEET_RE: Final[re.Pattern[str]] = re.compile(r"[0-9@$!|(©€₽¥§*]")
 #: Кириллица и латиница внутри одного слова (цифры между ними допускаются).
 _MIXED_SCRIPT_RE: Final[re.Pattern[str]] = re.compile(r"[а-яё][0-9]*[a-z]|[a-z][0-9]*[а-яё]")
+
+#: Цифра-подстановка, зажатая между буквами: «h0t», «vide0s», «b0t», «ка3ино».
+#: Цифры на краях слова («mp3», «4k», «fb2», «x10») обходом не считаются.
+_LEET_WORD_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?<![0-9])[a-zа-яё][013457]{1,2}[a-zа-яё]"
+)
 
 _WHITESPACE_RE: Final[re.Pattern[str]] = re.compile(r"\s+")
 _SEPARATORS_RE: Final[re.Pattern[str]] = re.compile(r"[^0-9a-zа-яёіѕ]+")
@@ -180,34 +201,39 @@ class TextCleaner:
         )
         # «прииивееет» -> «прииивееет» с максимум двумя повторами.
         deduped = _REPEATS_RE.sub(r"\1\1", joined)
-        deleet = deduped.translate(_TRANSLATE_DELEET) if _LEET_RE.search(deduped) else deduped
-
-        has_latin = _LATIN_RE.search(lowered) is not None
-        has_cyrillic = _CYRILLIC_RE.search(lowered) is not None
-
         variant_source: list[str] = [lowered, joined, deduped]
-        if deleet != deduped:
-            variant_source.append(deleet)
+        if _LEET_RE.search(deduped):
+            variant_source.append(deduped.translate(_TRANSLATE_DELEET))
+            variant_source.append(deduped.translate(_TRANSLATE_DELEET_LAT))
+            if "1" in deduped or "!" in deduped:
+                variant_source.append(deduped.translate(_TRANSLATE_DELEET_LAT_L))
+                if _CYRILLIC_RE.search(deduped):
+                    variant_source.append(deduped.translate(_TRANSLATE_DELEET_CYR_I))
 
         variants: list[str] = []
-        for source in variant_source:
+        for source in cls._dedup(variant_source):
             variants.append(source)
-            # Латиница -> кириллица нужна, только если латиница вообще есть.
-            if has_latin:
+            # Алфавиты проверяем у КАЖДОГО варианта, а не у исходника: leet-замена
+            # сама вносит кириллицу («h0t» -> «hоt»), и без обратного перевода
+            # английский спам с цифрами проходил фильтр насквозь.
+            if _LATIN_RE.search(source):
                 variants.append(source.translate(_TRANSLATE_LAT_TO_CYR))
-            if has_cyrillic:
+            if _CYRILLIC_RE.search(source):
                 variants.append(source.translate(_TRANSLATE_CYR_TO_LAT))
 
         squashed = [cls._squash(variant) for variant in variants]
 
         # Одиночный дефис — это «какой-то» и «bonus-vulkan», а не обход фильтра.
         # Признаком обхода считаем невидимые символы, растянутые пробелами буквы,
-        # смешение алфавитов или слово, разорванное пунктуацией дважды и более.
+        # смешение алфавитов, цифру внутри слова («h0t») или слово, разорванное
+        # пунктуацией дважды и более. Вес обхода начисляется только вместе
+        # с тематической категорией, так что «covid19» или «b2b» ничем не грозят.
         obfuscated = (
             any(ch in raw for ch in _INVISIBLE)
             or spaced_hits > 0
             or _SPLIT_WORD_RE.search(lowered) is not None
             or cls._has_mixed_script_word(lowered)
+            or _LEET_WORD_RE.search(lowered) is not None
         )
 
         return NormalizedText(
