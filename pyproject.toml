@@ -1,0 +1,9 @@
+# Конфигурация линтера. Запуск: ruff check .
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Файлы ревизий генерирует alembic по своему шаблону — не наш стиль.
+exclude = ["migrations/versions", ".venv", ".idea"]
+
+[tool.ruff.lint]
+select = ["F", "E", "I", "UP", "B"]

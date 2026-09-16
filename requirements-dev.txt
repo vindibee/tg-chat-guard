@@ -1,0 +1,7 @@
+# Зависимости для разработки и тестов. В Docker-образ не попадают.
+-r requirements.txt
+
+pytest>=8.0
+pytest-asyncio>=0.23
+mypy>=1.10
+ruff>=0.5

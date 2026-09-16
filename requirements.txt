@@ -1,0 +1,9 @@
+# --- Runtime ---------------------------------------------------------------
+aiogram>=3.13,<4.0
+pydantic>=2.8
+pydantic-settings>=2.4
+SQLAlchemy[asyncio]>=2.0.30
+alembic>=1.13            # миграции схемы
+redis>=5.0
+aiosqlite>=0.20          # dev/staging БД
+asyncpg>=0.29            # production БД (PostgreSQL)
