@@ -32,6 +32,7 @@ from bot.services.antispam_engine import AntiSpamEngine, EngineConfig
 from bot.services.deleted_registry import DeletedMessageRegistry
 from bot.services.duplicate_detector import DuplicateDetector
 from bot.services.event_service import EventService
+from bot.services.promo_tracker import PromoTracker
 from bot.services.report_service import ReportService
 from bot.services.reputation_service import ReputationService
 from bot.services.sample_service import SampleService
@@ -85,6 +86,7 @@ def build_dispatcher(
     samples = SampleService(database)
     reports = ReportService(settings, redis)
     duplicates = DuplicateDetector(settings, redis)
+    promo = PromoTracker(settings, redis)
     deleted_registry = DeletedMessageRegistry()
     reputation = reputation or ReputationService(settings, redis)
     engine = AntiSpamEngine(EngineConfig.from_settings(settings))
@@ -103,6 +105,7 @@ def build_dispatcher(
             reports=reports,
             reputation=reputation,
             duplicates=duplicates,
+            promo=promo,
             deleted_registry=deleted_registry,
         )
     )

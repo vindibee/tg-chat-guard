@@ -62,6 +62,10 @@ class SignalKind(StrEnum):
     #: Упоминание бота (`@..._bot`, `t.me/...bot`) — основной канал рекламы
     #: спам-сеток: сам текст безобиден, всё «содержимое» спрятано в боте.
     BOT_MENTION = "bot_mention"
+    #: Бота рекламирует участник, ещё не набравший истории в чате.
+    NEWCOMER_PROMO = "newcomer_promo"
+    #: Тот же автор уже упоминал этого же бота — работа спам-сетки по расписанию.
+    PROMO_REPEAT = "promo_repeat"
     REFERRAL = "referral"
     CALL_TO_ACTION = "call_to_action"
     SALES_PITCH = "sales_pitch"
@@ -88,6 +92,7 @@ HARD_FACTORS: Final[frozenset[SignalKind]] = frozenset(
         SignalKind.HIDDEN_LINK,
         SignalKind.MENTION,
         SignalKind.BOT_MENTION,
+        SignalKind.PROMO_REPEAT,
         SignalKind.REFERRAL,
         SignalKind.CALL_TO_ACTION,
         SignalKind.CONTACT,
@@ -95,6 +100,21 @@ HARD_FACTORS: Final[frozenset[SignalKind]] = frozenset(
         SignalKind.PROFILE_KEYWORD,
         SignalKind.PROFILE_LINK,
         SignalKind.DUPLICATE,
+    }
+)
+
+
+#: Признаки рекламы: сообщение с ними не приближает автора к «одобренному»,
+#: даже если его пропустили. Иначе спамер, которого не поймали семь раз,
+#: получает иммунитет и больше не проверяется вовсе.
+PROMO_FACTORS: Final[frozenset[SignalKind]] = frozenset(
+    {
+        SignalKind.LINK,
+        SignalKind.TELEGRAM_INVITE,
+        SignalKind.HIDDEN_LINK,
+        SignalKind.BOT_MENTION,
+        SignalKind.REFERRAL,
+        SignalKind.CONTACT,
     }
 )
 
@@ -163,6 +183,11 @@ class Verdict:
         return self.action.is_punishment
 
     @property
+    def has_promo(self) -> bool:
+        """Есть ли в сообщении реклама (ссылка, бот, контакты, рефкод)."""
+        return any(signal.kind in PROMO_FACTORS for signal in self.signals)
+
+    @property
     def hard_factors(self) -> tuple[Signal, ...]:
         return tuple(signal for signal in self.signals if signal.is_hard)
 
@@ -226,6 +251,8 @@ class MessageContext:
     external_ban: bool = False
     #: Какой именно источник его нашёл (для логов и карточки).
     external_ban_source: str = ""
+    #: Сколько раз ДО этого сообщения автор упоминал того же бота в окне памяти.
+    promo_repeats: int = 0
 
     @property
     def profile(self) -> str:
@@ -262,6 +289,8 @@ class EngineConfig:
             SignalKind.HIDDEN_LINK: 5.0,
             SignalKind.MENTION: 2.0,
             SignalKind.BOT_MENTION: 4.5,
+            SignalKind.NEWCOMER_PROMO: 2.0,
+            SignalKind.PROMO_REPEAT: 4.0,
             SignalKind.REFERRAL: 4.0,
             SignalKind.CALL_TO_ACTION: 3.0,
             SignalKind.SALES_PITCH: 2.0,
@@ -291,6 +320,8 @@ class EngineConfig:
         weights[SignalKind.EXTERNAL_BAN] = settings.reputation_weight
         weights[SignalKind.DUPLICATE] = settings.duplicate_weight
         weights[SignalKind.BOT_MENTION] = settings.bot_mention_weight
+        weights[SignalKind.NEWCOMER_PROMO] = settings.newcomer_promo_weight
+        weights[SignalKind.PROMO_REPEAT] = settings.promo_repeat_weight
         return replace(config, weights=weights)
 
     def weight(self, kind: SignalKind) -> float:
@@ -383,6 +414,19 @@ class AntiSpamEngine:
     def check(self, text: str, **kwargs: object) -> Verdict:
         """Упрощённый вход для тестов и ручных проверок."""
         return self.evaluate(MessageContext(text=text, **kwargs))  # type: ignore[arg-type]
+
+    def promo_targets(self, context: MessageContext) -> tuple[str, ...]:
+        """Сторонние боты, которые рекламирует сообщение (нижний регистр, без «@»).
+
+        Нужны хендлеру ДО оценки: по ним считаются повторы рекламы одного и того
+        же бота одним автором (`MessageContext.promo_repeats`).
+        """
+        targets = {name for name in self._collect_mentions(context) if _is_bot_username(name)}
+        for match in _TELEGRAM_INVITE_RE.finditer(context.payload):
+            target = match.group("target").lower()
+            if _is_bot_username(target) and target not in context.known_safe_usernames:
+                targets.add(target)
+        return tuple(sorted(targets))
 
     def evaluate(self, context: MessageContext) -> Verdict:
         """Главная точка входа: возвращает вердикт по сообщению."""
@@ -713,6 +757,28 @@ class AntiSpamEngine:
         signals: list[Signal] = []
         # Маскировка текста сама по себе ничего не значит («covid19»), но рядом
         # со ссылкой на бота это почерк спам-сетки: «check BEST vide0s @xxxbot».
+        if has_bot_mention and context.is_new_member:
+            # У новичка нет истории в чате, а бот в первых сообщениях — главный
+            # почерк спам-сетки. Старожилы сюда не попадают: одобренных участников
+            # движок не проверяет вовсе.
+            signals.append(
+                Signal(
+                    kind=SignalKind.NEWCOMER_PROMO,
+                    weight=self._config.weight(SignalKind.NEWCOMER_PROMO),
+                    evidence="bot_from_newcomer",
+                )
+            )
+        if has_bot_mention and context.promo_repeats > 0:
+            # Каждый повтор дороже: первое сообщение — удаление, второе — мьют,
+            # дальше бан. Потолок, чтобы одно правило не перевешивало всё.
+            signals.append(
+                Signal(
+                    kind=SignalKind.PROMO_REPEAT,
+                    weight=self._config.weight(SignalKind.PROMO_REPEAT)
+                    * min(context.promo_repeats, 3),
+                    evidence=f"тот же бот уже был {context.promo_repeats} раз",
+                )
+            )
         if (normalized.obfuscated or keyword_obfuscated) and (has_category or has_bot_mention):
             signals.append(
                 Signal(
@@ -777,6 +843,7 @@ class AntiSpamEngine:
             # книжным. Доверенные боты (Флибуста) сюда не попадают вовсе:
             # они в `known_safe_usernames`.
             SignalKind.BOT_MENTION,
+            SignalKind.PROMO_REPEAT,
         }
     )
 

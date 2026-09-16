@@ -312,6 +312,26 @@ all the time. Combined with a topic or a call to action it is deleted, and the
 example above scores 14 points. To delete any third-party bot mention, set
 `BOT_MENTION_WEIGHT=6`.
 
+### Promo campaigns: behaviour over words
+
+A spam network posts **the same bot** every 40 minutes, changing the text each time:
+`videos bot= @llkaebot`, `check BEST vide0s … @llkaebot`, `bhai log … real videos h @llkaebot`.
+A dictionary cannot keep up with that rotation, so three behavioural rules apply:
+
+| Rule | How it works |
+|---|---|
+| promotion earns no trust | a message with a link, bot, contacts or referral code does not count toward "approved" status, even if it was let through. Otherwise an uncaught spammer would gain immunity after 7 messages |
+| a newcomer promotes a bot | `NEWCOMER_PROMO_WEIGHT` (+2.0) — deleted from the very first message |
+| the same bot again | `PROMO_REPEAT_WEIGHT` (+4.0) for each earlier mention by this author within `PROMO_REPEAT_WINDOW` (one day), up to ×3 |
+
+A real spammer's feed of 11 messages: the first is deleted with a mute, from the
+second on the author is banned (`tests/test_promo_campaign.py`).
+
+The cost of the newcomer rule: a member with fewer than `NEW_MEMBER_MESSAGES`
+messages who recommends a third-party bot gets the message deleted; the admin-chat
+card allows a rollback. Approved members are not affected. Disable with
+`NEWCOMER_PROMO_WEIGHT=0`.
+
 ## Closed loop: labeling → regression run
 
 `/spam` and `/ham` do more than punish and roll back — they build a labeled sample.
@@ -511,6 +531,9 @@ chat: `REPUTATION_AUTOBAN=true` enables auto-ban if you are ready to trust the d
 | `DUPLICATE_WINDOW` | `3600` | duplicate observation window, seconds |
 | `DUPLICATE_MIN_LENGTH` | `40` | shorter messages are not checked |
 | `BOT_MENTION_WEIGHT` | `4.5` | weight of a third-party bot mention (`@..._bot`, `t.me/...bot`); `>= DELETE_THRESHOLD` deletes any |
+| `NEWCOMER_PROMO_WEIGHT` | `2.0` | extra weight when a newcomer promotes a bot; `0` disables |
+| `PROMO_REPEAT_WEIGHT` | `4.0` | extra weight per repeat of the same bot by the same author (up to ×3) |
+| `PROMO_REPEAT_WINDOW` | `86400` | how long bot promotions are remembered, seconds |
 | `SERVICE_CLEANUP` | all groups except `pin` | which service messages to remove |
 | `CLEAN_DEFAULT_DEPTH` | `1000` | depth of `/clean all` |
 | `CLEAN_MAX_DEPTH` | `5000` | cleanup depth cap |
@@ -540,7 +563,7 @@ python tests/test_antispam_engine.py       # any file also runs without pytest
 python -m bot.tools.regress                # run the labeled sample
 ```
 
-256 tests, `bot` package coverage 87%. Covered: text normalization, anti-false-positive
+268 tests, `bot` package coverage 87%. Covered: text normalization, anti-false-positive
 scenarios for book requests, spam detection, loading settings from `.env`, the
 whitelist, blocklists, profile checks and the mailing detector (including
 degradation on Redis and network failures), the trust middleware, approved-member
@@ -550,7 +573,8 @@ newcomer checks on join, schema migrations, log formatters, safe Bot API wrapper
 real dispatcher on a mocked Bot API.
 `tests/test_regressions.py` — one test per bug found,
 `tests/test_english_spam.py` — an English mailing that slipped through in the chat,
-`tests/test_bot_adult_spam.py` — leetspeak and 18+ advertising via bots.
+`tests/test_bot_adult_spam.py` — leetspeak and 18+ advertising via bots,
+`tests/test_promo_campaign.py` — a real promo campaign replayed through the handler.
 
 > Tests are isolated from the local `.env` and environment variables
 > (`tests/conftest.py` + `_env_file=None`): lowering a threshold locally does not

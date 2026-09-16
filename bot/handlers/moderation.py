@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any, Final
 
@@ -18,6 +19,7 @@ from bot.services.antispam_engine import Action, AntiSpamEngine, MessageContext,
 from bot.services.deleted_registry import DeletedMessageRegistry
 from bot.services.duplicate_detector import DuplicateDetector
 from bot.services.event_service import EventService
+from bot.services.promo_tracker import PromoTracker
 from bot.services.reputation_service import ReputationService, ReputationVerdict
 from bot.utils.telegram import (
     extract_payload,
@@ -105,6 +107,7 @@ async def moderate_message(
     duplicates: DuplicateDetector,
     deleted_registry: DeletedMessageRegistry,
     message_count: int = 0,
+    promo: PromoTracker | None = None,
     **_: Any,
 ) -> None:
     """Главный обработчик: проверяет сообщение и применяет санкции."""
@@ -127,6 +130,12 @@ async def moderate_message(
     context = build_context(
         message, settings, activity, message_count, blocklist, duplicate_authors
     )
+    # Спам-сеть меняет текст, но не бота: считаем, сколько раз автор уже
+    # рекламировал того же бота. Правка сообщения повтором не считается.
+    promo_targets = engine.promo_targets(context)
+    if promo is not None and promo_targets and user_id and not message.edit_date:
+        repeats = await promo.register(message.chat.id, user_id, promo_targets)
+        context = dataclasses.replace(context, promo_repeats=repeats)
     verdict = engine.evaluate(context)
 
     log_extra = {
@@ -138,12 +147,16 @@ async def moderate_message(
         "message_count": message_count,
         "blocklist": blocklist.source or None,
         "duplicate_authors": duplicate_authors,
+        "promo_targets": list(promo_targets),
+        "promo_repeats": context.promo_repeats,
         **verdict.as_log_extra(),
     }
 
     if not verdict.is_spam:
         # Чистое сообщение приближает участника к статусу «одобренного».
-        if user_id and not message.edit_date:
+        # Пропущенная реклама — нет: иначе непойманный спамер за семь сообщений
+        # зарабатывает иммунитет и больше не проверяется вовсе.
+        if user_id and not message.edit_date and not verdict.has_promo:
             await activity.register_clean_message(message.chat.id, user_id)
         logger.debug("Сообщение чистое", extra=log_extra)
         return

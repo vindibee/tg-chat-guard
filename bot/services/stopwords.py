@@ -382,7 +382,8 @@ _ENGLISH_SCAM: Final[Sequence[KeywordRule]] = (
             r"(meet|find|date|chat with|talk to) (\w+ )?(girls?|women|ladies|singles|babes)",
             r"(real|exclusive|viral|secret|unseen|hidden|desi) (videos?|vids?|clips?|mms)",
             r"(girls?|ladies|bhabhi) (videos?|vids?|pics?)", r"videos? (and|&|\+) girls?",
-            r"viral mms", r"desi (girls?|bhabhi)",
+            r"viral mms", r"desi (girls?|bhabhi|videos?|vids?)",
+            r"(videos?|vids?|girls?|mms) bot",
         ],
     ),
     KeywordRule.build(
