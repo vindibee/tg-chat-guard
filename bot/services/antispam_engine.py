@@ -405,9 +405,10 @@ class AntiSpamEngine:
         signals.extend(link_signals)
         signals.extend(self._context_signals(context, normalized))
         keyword_obfuscated = any(match.obfuscated for match in keyword_matches)
+        has_bot_mention = any(signal.kind is SignalKind.BOT_MENTION for signal in signals)
         signals.extend(
             self._behaviour_signals(
-                context, normalized, bool(categories), keyword_obfuscated
+                context, normalized, bool(categories), keyword_obfuscated, has_bot_mention
             )
         )
 
@@ -706,10 +707,13 @@ class AntiSpamEngine:
         normalized: NormalizedText,
         has_category: bool,
         keyword_obfuscated: bool = False,
+        has_bot_mention: bool = False,
     ) -> list[Signal]:
         """Поведенческие признаки: обфускация, пересылка, новичок в чате."""
         signals: list[Signal] = []
-        if (normalized.obfuscated or keyword_obfuscated) and has_category:
+        # Маскировка текста сама по себе ничего не значит («covid19»), но рядом
+        # со ссылкой на бота это почерк спам-сетки: «check BEST vide0s @xxxbot».
+        if (normalized.obfuscated or keyword_obfuscated) and (has_category or has_bot_mention):
             signals.append(
                 Signal(
                     kind=SignalKind.OBFUSCATION,

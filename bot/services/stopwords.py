@@ -370,6 +370,22 @@ _ENGLISH_SCAM: Final[Sequence[KeywordRule]] = (
         ],
     ),
     KeywordRule.build(
+        "adult_bait_en",
+        Category.ADULT,
+        3.0,
+        [
+            # Приманка без явной лексики 18+: «check BEST vide0s and meet girls on
+            # this bot», «ye bot me real videos h». Вес ниже, чем у adult_video_en:
+            # сама по себе фраза не криминальна, спамом её делает бот рядом.
+            # Прилагательные подобраны узко: «new video», «free videos», «best
+            # videos» — обычный разговор, их здесь нет.
+            r"(meet|find|date|chat with|talk to) (\w+ )?(girls?|women|ladies|singles|babes)",
+            r"(real|exclusive|viral|secret|unseen|hidden|desi) (videos?|vids?|clips?|mms)",
+            r"(girls?|ladies|bhabhi) (videos?|vids?|pics?)", r"videos? (and|&|\+) girls?",
+            r"viral mms", r"desi (girls?|bhabhi)",
+        ],
+    ),
+    KeywordRule.build(
         "adult_video_en",
         Category.ADULT,
         4.5,

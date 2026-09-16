@@ -43,6 +43,9 @@ SPAM: tuple[str, ...] = (
     "Горячие видео уже ждут, переходи в бота @hot_video_bot",
     "Г0ряч1е в1де0 18+ @priv_bot",
     "Слив фото девушек, всё в нашем боте @sliv_bot",
+    # Пришли в чат 16.09.2026 уже после первого исправления.
+    "check BEST vide0s and meet girls on this bot = @llkaebot",
+    "bhai log sub yha scam kr rhe h ye bot me real videos h  @llkaebot",
 )
 
 LEGIT: tuple[str, ...] = (
@@ -56,6 +59,10 @@ LEGIT: tuple[str, ...] = (
     "Прочитал 1984 и Fahrenheit 451, что дальше?",
     "Нужен covid19 справочник в pdf, b2b маркетинг тоже подойдёт",
     "Try the bot, it has almost every book in epub",
+    "Check my new video review of Dune youtube.com/watch?v=abc",
+    "The best videos about Tolstoy are on @lit_lectures_bot, and books too",
+    "@librebook_bot выдаёт 1984 и Fahrenheit 451 в epub",
+    "Meet the author: встреча с автором в субботу, подробности у @club_admin",
 )
 
 
@@ -130,3 +137,11 @@ def test_bot_mention_weight_comes_from_settings() -> None:
     )
     config = EngineConfig.from_settings(settings)
     assert config.weight(SignalKind.BOT_MENTION) == 9.0
+
+
+def test_obfuscation_next_to_bot_counts_without_category() -> None:
+    """Маскировка без тематики не штрафуется, но рядом с ботом — штрафуется."""
+    plain = check("c0ol stuff here")
+    assert not any(s.kind is SignalKind.OBFUSCATION for s in plain.signals)
+    with_bot = check("c0ol stuff here @x_promo_bot")
+    assert any(s.kind is SignalKind.OBFUSCATION for s in with_bot.signals), with_bot.explain()
