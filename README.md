@@ -124,6 +124,20 @@ its weight is symbolic and it can never lead to a sanction.
 `drugs` combined with a spam factor escalates straight to a ban.
 `account_trade` covers selling accounts, phone numbers and fake engagement.
 
+### P2P scam: two-part rules
+
+"Куплю USDT при личной встрече" and "I'm from China, buying USDT above market
+price" carry no link and no channel invite, so the older rules never saw them.
+These schemes are identified by a combination rather than a word: the rule only
+fires when the message contains both the asset (`usdt`, `bitcoin`, `crypto`)
+and the scheme itself ("personal meeting", "above market price", "policy
+restrictions", "no need to scan QR", "we pay first").
+
+Such rules are marked `standalone`: a match is a spam factor on its own
+(`SignalKind.SCAM_OFFER`) — an offer is not a topic of conversation. They are
+deliberately not "aggressive", so the book-intent discount still protects
+readers: "looking for Mastering Bitcoin, will buy in person" passes freely.
+
 ## Getting started
 
 ### Docker (recommended)

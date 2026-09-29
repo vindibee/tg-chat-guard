@@ -86,6 +86,13 @@ class KeywordRule:
         category: категория правила.
         weight: базовый вклад в спам-скор.
         pattern: все выражения правила, собранные в одну альтернацию.
+        requires: второе условие — правило срабатывает, только если в том же
+            сообщении есть ещё и это. Так описываются схемы, которые опознаются
+            не словом, а сочетанием: «при личной встрече» + «USDT» — скам,
+            «при личной встрече» отдельно — обычная передача книги.
+        standalone: совпадение само по себе является спам-фактором. Ставится
+            только правилам, которые описывают само мошенническое предложение,
+            а не тему разговора (см. `SignalKind.SCAM_OFFER`).
         check_squashed: проверять ли склеенную форму (анти-обход символами).
         min_squash_len: минимальная длина совпадения в склеенной форме —
             защита от ложных срабатываний на случайных стыках слов.
@@ -95,6 +102,8 @@ class KeywordRule:
     category: Category
     weight: float
     pattern: re.Pattern[str]
+    requires: re.Pattern[str] | None = None
+    standalone: bool = False
     check_squashed: bool = True
     min_squash_len: int = 6
 
@@ -106,6 +115,8 @@ class KeywordRule:
         weight: float,
         patterns: Sequence[str],
         *,
+        requires: Sequence[str] | None = None,
+        standalone: bool = False,
         check_squashed: bool = True,
         min_squash_len: int = 6,
     ) -> KeywordRule:
@@ -114,6 +125,8 @@ class KeywordRule:
             category=category,
             weight=weight,
             pattern=compile_alternation(patterns),
+            requires=compile_alternation(requires) if requires else None,
+            standalone=standalone,
             check_squashed=check_squashed,
             min_squash_len=min_squash_len,
         )
@@ -134,6 +147,11 @@ class KeywordMatch:
     @property
     def weight(self) -> float:
         return self.rule.weight
+
+    @property
+    def standalone(self) -> bool:
+        """Совпадение само по себе является спам-фактором."""
+        return self.rule.standalone
 
 
 # --------------------------------------------------------------------------- #
@@ -202,6 +220,79 @@ _CRYPTO_SCAM: Final[Sequence[KeywordRule]] = (
         Category.CRYPTO_SCAM,
         2.5,
         [r"скальпинг ?сигнал", r"копи ?треидинг", r"арбитражн\w* связк", r"p2p связк"],
+    ),
+)
+
+#: Предмет сделки. P2P-правила ниже без него не срабатывают: мошенничество
+#: опознаётся сочетанием «крипта + схема», а не одной из половин. Без этого
+#: «при личной встрече» ловило бы обычную передачу бумажной книги из рук в руки.
+_CRYPTO_ASSET: Final[Sequence[str]] = (
+    r"usdt", r"usdc", r"tether", r"тетер", r"btc", r"bit ?coin", r"биткоин\w*",
+    r"eth\b", r"ethereum", r"эфир(а|ом|ы|ов)?\b", r"trc ?-? ?20", r"trx",
+    r"кри?пт\w*", r"crypto", r"stable ?coin", r"стеиблкоин",
+    # Кириллический транслит — им пользуются, чтобы обойти латинские словари.
+    # «БТС» сознательно не берём: это ещё и музыкальная группа.
+    r"юсдт", r"усдт", r"тезер", r"биток\w*", r"сатош\w*",
+)
+
+#: P2P-скам: «куплю USDT выше рынка / при личной встрече».
+#:
+#: Схема работает без единой ссылки и без стоп-слов из старого словаря: текст
+#: выглядит как частное объявление, а вся ловушка — в самом предложении сделки.
+#: Поэтому оба правила помечены `standalone`: их совпадение и есть спам-фактор.
+#: Агрессивным фактором они при этом НЕ считаются, так что книжный запрос
+#: («ищу Mastering Bitcoin, куплю при личной встрече») спасает книжная скидка.
+_P2P_SCAM: Final[Sequence[KeywordRule]] = (
+    KeywordRule.build(
+        "p2p_crypto_offer",
+        Category.CRYPTO_SCAM,
+        # Ровно порог удаления: законченное P2P-предложение само по себе —
+        # повод удалить сообщение, второго признака схеме не требуется.
+        # Книжная скидка (-4.0) при этом остаётся сильнее, и читатель,
+        # готовый «купить при личной встрече», не страдает.
+        6.0,
+        [
+            # Русская версия: покупка «с рук» по завышенному курсу.
+            r"при личнои встрече", r"личн\w{1,3} встреч\w*", r"встретимся лично",
+            r"из рук в руки", r"обмен при встрече",
+            r"выгодн\w* курс", r"курс выше (рынка|рыночн\w*|биржев\w*)",
+            r"выше (рыночного|биржевого|рынка) курса", r"по курсу выше",
+            r"курс лучше,? чем", r"куплю (за )?налич", r"за наличные",
+            r"наличк(а|у|ои)", r"обмен\w* налич", r"куплю дорого",
+            # Англоязычная версия: «я из Китая, сам купить не могу».
+            r"(im|i am) (from|in) china", r"(im|i am) chinese",
+            r"due to (policy|regional|local|government) restrictions?",
+            r"policy restrictions?", r"unable to (purchase|buy|get|acquire)",
+            r"cannot (purchase|buy)", r"cant (purchase|buy)",
+            r"(above|over) (the )?market (price|rate|value)",
+            r"higher than (the )?market", r"\d+ ?% ?[-–—]? ?\d* ?% ?(above|over)",
+            r"buying (usdt|usdc|crypto|btc) at",
+        ],
+        requires=_CRYPTO_ASSET,
+        standalone=True,
+    ),
+    KeywordRule.build(
+        "p2p_crypto_trust_bait",
+        Category.CRYPTO_SCAM,
+        4.0,
+        [
+            # Вторая половина схемы — снятие страха у жертвы. В честной сделке
+            # эти оговорки не нужны, их произносит только тот, кто знает, чего
+            # жертва боится: «не надо сканировать QR», «деньги вперёд».
+            r"no need to scan", r"without scanning", r"scan (any |the )?qr",
+            r"qr ?cod", r"unfamiliar links?", r"strange links?",
+            r"(we|i) ?(will|ll)? ?(make (the )?)?pay(ment)? ?(you )?first",
+            r"pay(ment)? first", r"paid first", r"we pay first",
+            r"once (we|i) confirm", r"after (we|i) confirm",
+            r"send (the |me the )?(usdt|usdc|coins?|funds?|crypto) to me",
+            r"гарантиру(ю|ем) (выгодн|безопасн|честн|быстр|хорош|лучш)",
+            r"сделка через гаранта", r"работаю (с|через) гарант",
+            r"безопасн\w* сделк", r"без риска для вас", r"деньги вперед",
+            r"не нужно (ничего )?сканировать", r"без ку ?ар ?код",
+            r"перевод перв\w*", r"плачу первым",
+        ],
+        requires=_CRYPTO_ASSET,
+        standalone=True,
     ),
 )
 
@@ -425,6 +516,7 @@ _ENGLISH_SCAM: Final[Sequence[KeywordRule]] = (
 DEFAULT_RULES: Final[tuple[KeywordRule, ...]] = (
     *_CASINO,
     *_CRYPTO_SCAM,
+    *_P2P_SCAM,
     *_ADULT,
     *_JOB_SCAM,
     *_DRUGS,
@@ -538,8 +630,12 @@ class StopWordRegistry:
                 matches.append(found)
         return tuple(matches)
 
-    @staticmethod
-    def _match_rule(rule: KeywordRule, text: NormalizedText) -> KeywordMatch | None:
+    @classmethod
+    def _match_rule(cls, rule: KeywordRule, text: NormalizedText) -> KeywordMatch | None:
+        # Правило с `requires` описывает схему из двух половин: пока в тексте
+        # нет второй, первая ничего не значит.
+        if rule.requires is not None and not cls._present(rule.requires, text):
+            return None
         found = text.search(rule.pattern)
         if found is not None:
             return KeywordMatch(rule=rule, evidence=found.group(0))
@@ -550,6 +646,13 @@ class StopWordRegistry:
             # Совпадение только в «склеенной» форме = попытка обхода фильтра.
             return KeywordMatch(rule=rule, evidence=found.group(0), obfuscated=True)
         return None
+
+    @staticmethod
+    def _present(pattern: re.Pattern[str], text: NormalizedText) -> bool:
+        """Есть ли выражение в тексте хоть в какой-нибудь из форм."""
+        return (
+            text.search(pattern) is not None or text.search_squashed(pattern) is not None
+        )
 
 
 DEFAULT_REGISTRY: Final[StopWordRegistry] = StopWordRegistry()

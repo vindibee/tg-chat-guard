@@ -55,6 +55,11 @@ class SignalKind(StrEnum):
     """Тип обнаруженного признака."""
 
     KEYWORD = "keyword"
+    #: Совпало правило, которое описывает само мошенническое предложение
+    #: («куплю USDT при личной встрече», «buying USDT above market price»).
+    #: В отличие от KEYWORD, это не тема разговора, а оффер: такому сообщению
+    #: не нужен ни второй фактор, ни ссылка — оно спам целиком.
+    SCAM_OFFER = "scam_offer"
     LINK = "link"
     TELEGRAM_INVITE = "telegram_invite"
     HIDDEN_LINK = "hidden_link"
@@ -87,6 +92,7 @@ class SignalKind(StrEnum):
 #: движок не наказывает (при `require_spam_factor=True`).
 HARD_FACTORS: Final[frozenset[SignalKind]] = frozenset(
     {
+        SignalKind.SCAM_OFFER,
         SignalKind.LINK,
         SignalKind.TELEGRAM_INVITE,
         SignalKind.HIDDEN_LINK,
@@ -109,6 +115,7 @@ HARD_FACTORS: Final[frozenset[SignalKind]] = frozenset(
 #: получает иммунитет и больше не проверяется вовсе.
 PROMO_FACTORS: Final[frozenset[SignalKind]] = frozenset(
     {
+        SignalKind.SCAM_OFFER,
         SignalKind.LINK,
         SignalKind.TELEGRAM_INVITE,
         SignalKind.HIDDEN_LINK,
@@ -363,8 +370,12 @@ def _is_bot_username(username: str) -> bool:
 _PHONE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?<!\d)(?:\+?\d{1,3}[\s\-()]{0,3})?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}(?!\d)"
 )
+#: Контактные данные в тексте. Две группы, потому что `\b` после двоеточия
+#: никогда не срабатывает (`:` и пробел — оба не словесные символы), и
+#: «Telegram: @user» проходил насквозь вместе со всей P2P-рассылкой.
 _MESSENGER_RE: Final[re.Pattern[str]] = re.compile(
-    r"\b(whats ?app|вотс ?ап|ватс ?ап|viber|ваибер|вибер|telegram ?:|тг ?:|wa\.me)\b",
+    r"\b(?:whats ?app|вотс ?ап|ватс ?ап|viber|ваибер|вибер|wa\.me)\b"
+    r"|\b(?:telegram|телеграм\w*|тг)\s*:",
     re.IGNORECASE,
 )
 #: Домены, которые встречаются в обычной речи и ссылкой не являются.
@@ -519,7 +530,7 @@ class AntiSpamEngine:
         """Тематические совпадения словаря."""
         return [
             Signal(
-                kind=SignalKind.KEYWORD,
+                kind=SignalKind.SCAM_OFFER if match.standalone else SignalKind.KEYWORD,
                 weight=match.weight,
                 evidence=match.evidence,
                 category=match.category,
@@ -645,8 +656,10 @@ class AntiSpamEngine:
         for url in context.entity_urls:
             if not url.strip():
                 continue
-            match = _SCHEME_URL_RE.search(url)
-            host = _extract_host(match.group("host")) if match else ""
+            # Своё имя, а не `match`: выше в этой же функции `match` — это
+            # элемент цикла `finditer`, то есть всегда непустое совпадение.
+            scheme = _SCHEME_URL_RE.search(url)
+            host = _extract_host(scheme.group("host")) if scheme else ""
             if host and host in self._config.safe_domains:
                 continue
             if url.lower().startswith("tg://") or "t.me" in url.lower():
@@ -830,6 +843,9 @@ class AntiSpamEngine:
     # ------------------------------------------------------------------ #
 
     #: Факторы, которые не оправдываются «поиском книги».
+    #: `SCAM_OFFER` сюда сознательно НЕ входит: «ищу Mastering Bitcoin, куплю
+    #: при личной встрече» — это читатель, и книжная скидка должна его спасти.
+    #: Рассылке скидка не помогает: книжных слов в ней нет вовсе.
     #: Рассылка здесь же: один и тот же текст с нескольких аккаунтов не
     #: становится книжным запросом от того, что в нём есть слово «ищу».
     AGGRESSIVE_FACTORS: Final[frozenset[SignalKind]] = frozenset(
