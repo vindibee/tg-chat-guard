@@ -313,6 +313,19 @@ digits, and all the actual content is hidden inside the bot.
   separately for Latin and Cyrillic. `h0t vide0s` becomes `hot videos`,
   `в1де0` becomes `видео`. A digit inside a word (`h0t`) is treated as evasion;
   digits at word edges (`mp3`, `fb2`, `4k`, `1984`) are not.
+* **Look-alike letters.** Greek, Coptic and "small capital" characters are
+  visually identical to Cyrillic but are different letters to the dictionary:
+  a human reads `Пσᴧучuть uнфσρмᴀцuю` as "Получить информацию" while the filter
+  saw a string of unknown symbols. NFKD does not decompose them — they have no
+  canonical decomposition — so `text_cleaner.py` carries a dedicated
+  `_HOMOGLYPHS` table. A look-alike adjacent to a normal letter counts as
+  evasion; a standalone Greek letter (`σ-algebra`, `α-particles`) does not.
+* **Keycap digits.** `6️⃣5️⃣ тысяч` collapses to `65 тысяч`. The variation
+  selector (VS16) is not treated as evasion: it appears in every other ordinary
+  emoji such as `❤️`.
+* **Private message links.** `t.me/m/<hash>` hides the username and previously
+  did not match the invite pattern at all — only one character follows the
+  slash. It is now an invite on par with `t.me/+…` and `joinchat`.
 * **Bot mentions.** Telegram requires bot usernames to end in `bot`.
   `@…bot`, a disguised `@promo_b0t` and a `t.me/…bot` link produce a hard factor
   weighted `BOT_MENTION_WEIGHT` (4.5) — more than a regular mention (2.0) — and
@@ -577,7 +590,7 @@ python tests/test_antispam_engine.py       # any file also runs without pytest
 python -m bot.tools.regress                # run the labeled sample
 ```
 
-268 tests, `bot` package coverage 87%. Covered: text normalization, anti-false-positive
+291 tests, `bot` package coverage 87%. Covered: text normalization, anti-false-positive
 scenarios for book requests, spam detection, loading settings from `.env`, the
 whitelist, blocklists, profile checks and the mailing detector (including
 degradation on Redis and network failures), the trust middleware, approved-member

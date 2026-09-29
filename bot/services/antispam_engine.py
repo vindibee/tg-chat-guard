@@ -352,10 +352,17 @@ _BARE_URL_RE: Final[re.Pattern[str]] = re.compile(
     rf"(?P<path>/[^\s<>\"']*)?(?![\w.])",
     re.IGNORECASE,
 )
+#: Ссылки внутрь Telegram. `m/<хеш>` — это личные сообщения: рассылки прячут
+#: за ними контакт, потому что username в такой ссылке не виден вовсе, а
+#: выглядит она как обычная t.me. Раньше она не подпадала под `[\w\-]{4,}`
+#: (после слэша всего одна буква) и не давала ни одного сигнала.
 _TELEGRAM_INVITE_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:https?://)?(?:t(?:elegram)?\.me|telegram\.dog)/(?P<target>\+[\w\-]+|joinchat/[\w\-]+|[\w\-]{4,})",
+    r"(?:https?://)?(?:t(?:elegram)?\.me|telegram\.dog)/"
+    r"(?P<target>\+[\w\-]+|joinchat/[\w\-]+|m/[\w\-]+|c/[\w\-]+|[\w\-]{4,})",
     re.IGNORECASE,
 )
+#: Приглашения, за которыми не видно, куда именно ведёт ссылка.
+_PRIVATE_INVITE_PREFIXES: Final[tuple[str, ...]] = ("+", "joinchat", "m/", "c/")
 _MENTION_RE: Final[re.Pattern[str]] = re.compile(r"(?<![\w/])@([a-z0-9_]{4,32})", re.IGNORECASE)
 #: Цифры, которыми маскируют окончание: «@promo_b0t», «@hot_8ot».
 _USERNAME_DELEET: Final[dict[int, str]] = str.maketrans({"0": "o", "8": "b", "7": "t"})
@@ -619,7 +626,7 @@ class AntiSpamEngine:
                 continue
             hosts_total += 1
             hosts_unsafe += 1
-            private = target.startswith(("+", "joinchat"))
+            private = target.startswith(_PRIVATE_INVITE_PREFIXES)
             if private:
                 kind = SignalKind.TELEGRAM_INVITE
             elif _is_bot_username(target):
